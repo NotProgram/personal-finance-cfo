@@ -233,7 +233,7 @@ function generarHtmlDashboard(conf, resumen) {
     '    <div class="fijo-row"><span class="fijo-nom">Plan Celular Claro</span><div><div class="fijo-val">$44.000</div><div class="fijo-tag">Día 14 • Débito/PSE</div></div></div>\n' +
     '    <div class="fijo-row"><span class="fijo-nom">Gasolina Moto</span><div><div class="fijo-val">$60.000</div><div class="fijo-tag">Día 15 • Efectivo</div></div></div>\n' +
     '  </div>\n' +
-    '  <a href="?view=mapa" style="display:flex; align-items:center; justify-content:center; gap:8px; background:linear-gradient(135deg, #1e1b4b 0%, #4338ca 100%); color:#fff; text-decoration:none; padding:12px; border-radius:12px; font-size:13px; font-weight:700; border:1px solid rgba(165,180,252,0.3); margin-bottom:10px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">🗺️ Ver Mapa de Calor de Gastos (GPS)</a>\n' +
+    '  <a href="' + getUrlWebAppConParametros("view=mapa") + '" style="display:flex; align-items:center; justify-content:center; gap:8px; background:linear-gradient(135deg, #1e1b4b 0%, #4338ca 100%); color:#fff; text-decoration:none; padding:12px; border-radius:12px; font-size:13px; font-weight:700; border:1px solid rgba(165,180,252,0.3); margin-bottom:10px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">🗺️ Ver Mapa de Calor de Gastos (GPS)</a>\n' +
     '  <button class="btn-close" onclick="cerrar()">✕ Cerrar Dashboard</button>\n' +
     '  <script>\n' +
     '    if (window.Telegram && window.Telegram.WebApp) {\n' +
@@ -425,7 +425,7 @@ function generarHtmlMapaCalor(conf, datosMapa) {
     epicentrosHtml +
     '  </div>\n' +
     '  <div class="nav-actions">\n' +
-    '    <a href="?view=webapp" class="btn-nav primary">📊 Ir al Dashboard</a>\n' +
+    '    <a href="' + getUrlWebAppConParametros("view=webapp") + '" class="btn-nav primary">📊 Ir al Dashboard</a>\n' +
     '    <button class="btn-nav" onclick="cerrar()">✕ Cerrar</button>\n' +
     '  </div>\n' +
     '  <script>\n' +
@@ -580,6 +580,61 @@ function obtenerPuntosMapaCalor() {
 }
 
 // ==========================================
+// SEGURIDAD Y AUTENTICACIÓN DE MINIAPPS WEB
+// ==========================================
+function obtenerAuthToken() {
+  var props = PropertiesService.getScriptProperties();
+  var token = props.getProperty("AUTH_TOKEN");
+  if (!token) {
+    token = Utilities.getUuid().replace(/-/g, "").substring(0, 24);
+    props.setProperty("AUTH_TOKEN", token);
+  }
+  return token;
+}
+
+function validarAccesoWeb(e) {
+  var tokenEsperado = obtenerAuthToken();
+  if (!tokenEsperado) return true; // Si no hay token configurado, no bloquear
+
+  if (!e || !e.parameter) return false;
+
+  var tokenRecibido = e.parameter.auth || e.parameter.token || e.parameter.key || "";
+  return tokenRecibido === tokenEsperado;
+}
+
+function servirPantallaAccesoRestringido() {
+  var html = '<!DOCTYPE html>\n' +
+    '<html lang="es">\n' +
+    '<head>\n' +
+    '  <meta charset="UTF-8">\n' +
+    '  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">\n' +
+    '  <title>Acceso Restringido - Personal Finance CFO</title>\n' +
+    '  <style>\n' +
+    '    * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }\n' +
+    '    body { background:#0a0e17; color:#f3f4f6; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px; }\n' +
+    '    .card { background:#111827; border:1px solid #1f2937; border-radius:20px; padding:36px 24px; max-width:400px; width:100%; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,0.6); }\n' +
+    '    .icon-box { width:64px; height:64px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.25); border-radius:18px; display:flex; align-items:center; justify-content:center; font-size:30px; margin:0 auto 20px auto; }\n' +
+    '    h1 { font-size:20px; font-weight:800; margin-bottom:12px; color:#f87171; letter-spacing:-0.3px; }\n' +
+    '    p { font-size:13px; color:#9ca3af; line-height:1.6; margin-bottom:24px; }\n' +
+    '    .footer { font-size:11px; color:#6b7280; border-top:1px solid #1f2937; padding-top:16px; }\n' +
+    '  </style>\n' +
+    '</head>\n' +
+    '<body>\n' +
+    '  <div class="card">\n' +
+    '    <div class="icon-box">🔒</div>\n' +
+    '    <h1>Acceso Restringido</h1>\n' +
+    '    <p>Este CFO y sus MiniApps son de uso personal privado.<br><br>Para acceder al <b>Dashboard Financiero</b> o al <b>Mapa de Calor</b>, utiliza los accesos directos autorizados desde tu chat de Telegram.</p>\n' +
+    '    <div class="footer">Personal Finance CFO • Sistema Protegido</div>\n' +
+    '  </div>\n' +
+    '</body>\n' +
+    '</html>';
+  return HtmlService.createHtmlOutput(html)
+    .setTitle("Acceso Restringido")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+}
+
+// ==========================================
 // UTILIDADES DE UBICACIÓN, MONEDA Y RUTAS
 // ==========================================
 function getUrlWebAppConParametros(params) {
@@ -594,7 +649,10 @@ function getUrlWebAppConParametros(params) {
       ? CONFIG.WEB_APP_URL.split("?")[0] 
       : "https://script.google.com/macros/s/AKfycbxjz1Y8xXd5vv6D3PuNxw16LI3UQByPnb_m3pCoDw9FTacTz7QVTmHmtUXQCaWT8qQ1LA/exec";
   }
-  return baseUrl + (params ? (baseUrl.indexOf("?") !== -1 ? "&" : "?") + params : "");
+  var authToken = obtenerAuthToken();
+  var authParam = "auth=" + encodeURIComponent(authToken);
+  var finalParams = params ? (params + "&" + authParam) : authParam;
+  return baseUrl + (baseUrl.indexOf("?") !== -1 ? "&" : "?") + finalParams;
 }
 
 function sanitizarImporteCOP(valor) {
@@ -696,6 +754,21 @@ function asegurarColumnasUbicacion(sheet) {
 // ENDPOINT GET (Health Check y Mini App)
 // ==========================================
 function doGet(e) {
+  // 1. Fallback de Apple Pay / iOS Shortcuts si alguna vez envía por GET
+  if (e && e.parameter && (e.parameter.importe !== undefined || e.parameter.monto !== undefined || (e.parameter.comercio && e.parameter.comercio !== ""))) {
+    var resGet = procesarTransaccionApplePay(e.parameter);
+    return HtmlService.createHtmlOutput(JSON.stringify(resGet));
+  }
+
+  // 2. Control de Acceso y Autenticación: Todas las MiniApps, APIs y comandos administrativos requieren auth
+  if (!validarAccesoWeb(e)) {
+    if (e && e.parameter && (e.parameter.api || e.parameter.format === "json" || e.parameter.json === "true")) {
+      return ContentService.createTextOutput(JSON.stringify({ error: "Acceso denegado: Token de autenticación inválido o ausente." }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    return servirPantallaAccesoRestringido();
+  }
+
   var conf = obtenerConfiguracionActual();
   if (e && e.parameter) {
     if (e.parameter.view === "mapa" || e.parameter.mapa === "true") {
@@ -872,10 +945,6 @@ function doGet(e) {
       }
       return ContentService.createTextOutput(JSON.stringify({ status: "ok", filasBorradas: filasBorradas }))
         .setMimeType(ContentService.MimeType.JSON);
-    }
-    if (e.parameter.importe !== undefined || e.parameter.monto !== undefined || (e.parameter.comercio && e.parameter.comercio !== "")) {
-      var resGet = procesarTransaccionApplePay(e.parameter);
-      return HtmlService.createHtmlOutput(JSON.stringify(resGet));
     }
   }
   var radarActual = analizarGastosHormigaYDesviacion(conf);
