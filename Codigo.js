@@ -10,13 +10,13 @@
 // CONFIGURACIÓN GLOBAL Y CREDENCIALES
 // ==========================================
 const CONFIG = {
-  // Credenciales
+  // Credenciales (Gestionadas de forma segura en ScriptProperties)
   TELEGRAM_TOKEN: PropertiesService.getScriptProperties().getProperty("TELEGRAM_TOKEN") || "TU_TELEGRAM_BOT_TOKEN",
   TELEGRAM_CHAT_ID: PropertiesService.getScriptProperties().getProperty("TELEGRAM_CHAT_ID") || "TU_TELEGRAM_CHAT_ID",
   GEMINI_API_KEY: PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY") || "TU_GEMINI_API_KEY",
 
-  // Datos Laborales y Nómina (Empresa S.A.S.)
-  EMPRESA: PropertiesService.getScriptProperties().getProperty("EMPRESA") || "Empresa S.A.S.",
+  // Datos Laborales y Nómina
+  EMPRESA: PropertiesService.getScriptProperties().getProperty("EMPRESA") || "Aviatur S.A.S.",
   SUELDO_BASICO: 3200000,
   QUINCENA_15_NETO: 1472000, // Día 15 de cada mes
   QUINCENA_30_NETO: 1721095, // Día 30 de cada mes (incluye auxilio transporte $249.095)
@@ -33,15 +33,42 @@ const CONFIG = {
   DEFAULT_DIA_PAGO_ARRIENDO: 30,
   DEFAULT_VALOR_ARRIENDO: 600000,
   ZONA_HORARIA: "America/Bogota",
-  WEB_APP_URL: PropertiesService.getScriptProperties().getProperty("WEB_APP_URL") || "https://script.google.com/macros/s/TU_DEPLOYMENT_ID/exec?view=webapp",
+  WEB_APP_URL: PropertiesService.getScriptProperties().getProperty("WEB_APP_URL") || "https://script.google.com/macros/s/AKfycbxjz1Y8xXd5vv6D3PuNxw16LI3UQByPnb_m3pCoDw9FTacTz7QVTmHmtUXQCaWT8qQ1LA/exec?view=webapp",
 
   // Nombres de Hojas
   HOJA_TRANSACCIONES: "Transacciones",
   HOJA_GASTOS_FIJOS: "Gastos_Fijos",
   HOJA_CONFIGURACION: "Configuracion",
   HOJA_METAS: "Metas",
-  HOJA_INVERSIONES: "Inversiones"
+  HOJA_INVERSIONES: "Inversiones",
+
+  // Mapa de Calor y Coordenadas por defecto (Bogotá)
+  DEFAULT_MAPA_LAT: 4.6097,
+  DEFAULT_MAPA_LNG: -74.0817,
+  DEFAULT_MAPA_ZOOM: 12
 };
+
+// Auto-guardado en ScriptProperties para persistencia permanente (solo si no son placeholders)
+(function asegurarScriptProperties() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (CONFIG.TELEGRAM_TOKEN && !CONFIG.TELEGRAM_TOKEN.startsWith("TU_") && !props.getProperty("TELEGRAM_TOKEN")) {
+      props.setProperty("TELEGRAM_TOKEN", CONFIG.TELEGRAM_TOKEN);
+    }
+    if (CONFIG.TELEGRAM_CHAT_ID && !CONFIG.TELEGRAM_CHAT_ID.startsWith("TU_") && !props.getProperty("TELEGRAM_CHAT_ID")) {
+      props.setProperty("TELEGRAM_CHAT_ID", CONFIG.TELEGRAM_CHAT_ID);
+    }
+    if (CONFIG.GEMINI_API_KEY && !CONFIG.GEMINI_API_KEY.startsWith("TU_") && !props.getProperty("GEMINI_API_KEY")) {
+      props.setProperty("GEMINI_API_KEY", CONFIG.GEMINI_API_KEY);
+    }
+    if (CONFIG.WEB_APP_URL && !CONFIG.WEB_APP_URL.startsWith("TU_") && !props.getProperty("WEB_APP_URL")) {
+      props.setProperty("WEB_APP_URL", CONFIG.WEB_APP_URL);
+    }
+    if (CONFIG.EMPRESA && !props.getProperty("EMPRESA")) {
+      props.setProperty("EMPRESA", CONFIG.EMPRESA);
+    }
+  } catch (e) {}
+})();
 
 // ==========================================
 // FUNCIÓN PARA AUTORIZAR PERMISOS OAUTH EN GOOGLE
@@ -206,6 +233,7 @@ function generarHtmlDashboard(conf, resumen) {
     '    <div class="fijo-row"><span class="fijo-nom">Plan Celular Claro</span><div><div class="fijo-val">$44.000</div><div class="fijo-tag">Día 14 • Débito/PSE</div></div></div>\n' +
     '    <div class="fijo-row"><span class="fijo-nom">Gasolina Moto</span><div><div class="fijo-val">$60.000</div><div class="fijo-tag">Día 15 • Efectivo</div></div></div>\n' +
     '  </div>\n' +
+    '  <a href="?view=mapa" style="display:flex; align-items:center; justify-content:center; gap:8px; background:linear-gradient(135deg, #1e1b4b 0%, #4338ca 100%); color:#fff; text-decoration:none; padding:12px; border-radius:12px; font-size:13px; font-weight:700; border:1px solid rgba(165,180,252,0.3); margin-bottom:10px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">🗺️ Ver Mapa de Calor de Gastos (GPS)</a>\n' +
     '  <button class="btn-close" onclick="cerrar()">✕ Cerrar Dashboard</button>\n' +
     '  <script>\n' +
     '    if (window.Telegram && window.Telegram.WebApp) {\n' +
@@ -268,11 +296,430 @@ function generarHtmlDashboard(conf, resumen) {
 }
 
 // ==========================================
+// TELEGRAM MINI APP: MAPA DE CALOR DE GASTOS 🗺️
+// ==========================================
+function servirWebAppMapaCalor(conf) {
+  conf = conf || obtenerConfiguracionActual();
+  var datosMapa = obtenerPuntosMapaCalor();
+  var html = generarHtmlMapaCalor(conf, datosMapa);
+  return HtmlService.createHtmlOutput(html)
+    .setTitle("Mapa de Calor de Gastos")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+}
+
+function generarHtmlMapaCalor(conf, datosMapa) {
+  conf = conf || obtenerConfiguracionActual();
+  datosMapa = datosMapa || obtenerPuntosMapaCalor();
+
+  var totalFmt = datosMapa.totalGastadoFmt || "$0 COP";
+  var conteo = datosMapa.conteo || 0;
+  var topLugar = (datosMapa.epicentros && datosMapa.epicentros.length > 0) ? datosMapa.epicentros[0].lugar : "Sin registros GPS";
+  var topLugarTotal = (datosMapa.epicentros && datosMapa.epicentros.length > 0) ? ("$" + formatearCOP(datosMapa.epicentros[0].total) + " COP") : "$0";
+
+  var puntosJson = JSON.stringify(datosMapa.puntos || []);
+  var defLat = CONFIG.DEFAULT_MAPA_LAT || 4.6097;
+  var defLng = CONFIG.DEFAULT_MAPA_LNG || -74.0817;
+  var defZoom = CONFIG.DEFAULT_MAPA_ZOOM || 12;
+
+  var epicentrosHtml = "";
+  if (datosMapa.epicentros && datosMapa.epicentros.length > 0) {
+    for (var i = 0; i < datosMapa.epicentros.length; i++) {
+      var item = datosMapa.epicentros[i];
+      var medalla = (i === 0) ? "🥇" : (i === 1 ? "🥈" : (i === 2 ? "🥉" : "📍"));
+      var pct = Math.round((item.total / (datosMapa.totalGastado || 1)) * 100);
+      epicentrosHtml += '<div class="epicentro-row">\n' +
+        '  <div class="epicentro-info">\n' +
+        '    <span class="epicentro-badge">' + medalla + '</span>\n' +
+        '    <div class="epicentro-txt">\n' +
+        '      <div class="epicentro-nom">' + item.lugar + '</div>\n' +
+        '      <div class="epicentro-sub">' + item.transacciones + ' transacciones • ' + pct + '% del gasto geolocalizado</div>\n' +
+        '    </div>\n' +
+        '  </div>\n' +
+        '  <div class="epicentro-val">$' + formatearCOP(item.total) + ' COP</div>\n' +
+        '</div>\n';
+    }
+  } else {
+    epicentrosHtml = '<div style="text-align:center; padding:18px 10px; color:#9ca3af; font-size:12px;">\n' +
+      '  <div style="font-size:26px; margin-bottom:6px;">📍</div>\n' +
+      '  Aún no tienes gastos con coordenadas GPS registradas.<br>\n' +
+      '  Al pagar con <b>Apple Pay</b> en tu iPhone o enviar tu <b>ubicación</b> en Telegram, aparecerán aquí automáticamente.\n' +
+      '</div>\n';
+  }
+
+  return '<!DOCTYPE html>\n' +
+    '<html lang="es">\n' +
+    '<head>\n' +
+    '  <meta charset="UTF-8">\n' +
+    '  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">\n' +
+    '  <title>Mapa de Calor de Gastos</title>\n' +
+    '  <script src="https://telegram.org/js/telegram-web-app.js"></script>\n' +
+    '  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />\n' +
+    '  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>\n' +
+    '  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>\n' +
+    '  <style>\n' +
+    '    :root {\n' +
+    '      --bg: #090d16;\n' +
+    '      --card-bg: #111827;\n' +
+    '      --card-border: #1f2937;\n' +
+    '      --text: #f9fafb;\n' +
+    '      --muted: #9ca3af;\n' +
+    '      --accent: #6366f1;\n' +
+    '      --green: #22c55e;\n' +
+    '      --red: #ef4444;\n' +
+    '    }\n' +
+    '    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }\n' +
+    '    body { background: var(--bg); color: var(--text); padding: 14px; padding-bottom: 30px; -webkit-font-smoothing: antialiased; }\n' +
+    '    .header { text-align: center; margin-bottom: 14px; }\n' +
+    '    .header h1 { font-size: 19px; font-weight: 700; color: #fff; }\n' +
+    '    .badge { display: inline-block; background: rgba(99, 102, 241, 0.18); color: #a5b4fc; font-size: 11px; padding: 3px 10px; border-radius: 12px; margin-top: 4px; font-weight: 600; }\n' +
+    '    .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }\n' +
+    '    .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 12px; }\n' +
+    '    .kpi-card.full { grid-column: span 2; background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border-color: rgba(165, 180, 252, 0.25); }\n' +
+    '    .kpi-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }\n' +
+    '    .kpi-val { font-size: 20px; font-weight: 800; color: #fff; margin-top: 3px; }\n' +
+    '    .kpi-sub { font-size: 11px; color: #a5b4fc; margin-top: 2px; }\n' +
+    '    #map { width: 100%; height: 380px; border-radius: 16px; border: 1px solid var(--card-border); margin-bottom: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 1; }\n' +
+    '    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }\n' +
+    '    .card-title { font-size: 13px; font-weight: 700; color: #e5e7eb; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }\n' +
+    '    .epicentro-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 12px; }\n' +
+    '    .epicentro-row:last-child { border-bottom: none; }\n' +
+    '    .epicentro-info { display: flex; align-items: center; gap: 8px; }\n' +
+    '    .epicentro-badge { font-size: 16px; }\n' +
+    '    .epicentro-nom { font-weight: 600; color: #f3f4f6; }\n' +
+    '    .epicentro-sub { font-size: 10px; color: var(--muted); }\n' +
+    '    .epicentro-val { font-weight: 700; color: #38bdf8; text-align: right; font-size: 12px; }\n' +
+    '    .nav-actions { display: flex; gap: 8px; margin-top: 10px; }\n' +
+    '    .btn-nav { flex: 1; background: #1f2937; border: 1px solid #374151; color: #e5e7eb; padding: 11px; border-radius: 12px; font-size: 12px; font-weight: 600; text-align: center; text-decoration: none; cursor: pointer; }\n' +
+    '    .btn-nav.primary { background: var(--accent); color: #fff; border-color: var(--accent); }\n' +
+    '    .leaflet-popup-content-wrapper { background: #111827 !important; color: #f9fafb !important; border: 1px solid #374151 !important; border-radius: 12px !important; box-shadow: 0 10px 25px rgba(0,0,0,0.6) !important; }\n' +
+    '    .leaflet-popup-tip { background: #111827 !important; }\n' +
+    '    .leaflet-container { background: #090d16 !important; }\n' +
+    '  </style>\n' +
+    '</head>\n' +
+    '<body>\n' +
+    '  <div class="header">\n' +
+    '    <h1>🗺️ Mapa de Calor de Gastos</h1>\n' +
+    '    <span class="badge">CFO Privado • Epicentros de Consumo</span>\n' +
+    '  </div>\n' +
+    '  <div class="kpi-grid">\n' +
+    '    <div class="kpi-card full">\n' +
+    '      <div class="kpi-title" style="color:#c7d2fe;">Gasto Total Geolocalizado</div>\n' +
+    '      <div class="kpi-val">' + totalFmt + '</div>\n' +
+    '      <div class="kpi-sub">' + conteo + ' transacciones mapeadas en tiempo real</div>\n' +
+    '    </div>\n' +
+    '    <div class="kpi-card">\n' +
+    '      <div class="kpi-title">📍 Compras GPS</div>\n' +
+    '      <div class="kpi-val" style="font-size:18px;">' + conteo + '</div>\n' +
+    '      <div class="kpi-sub">Apple Pay y Telegram</div>\n' +
+    '    </div>\n' +
+    '    <div class="kpi-card">\n' +
+    '      <div class="kpi-title">🥇 Epicentro #1</div>\n' +
+    '      <div class="kpi-val" style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="' + topLugar + '">' + topLugar + '</div>\n' +
+    '      <div class="kpi-sub">' + topLugarTotal + '</div>\n' +
+    '    </div>\n' +
+    '  </div>\n' +
+    '  <div id="map"></div>\n' +
+    '  <div class="card">\n' +
+    '    <div class="card-title"><span>🔥 Epicentros de Mayor Fuga de Dinero</span></div>\n' +
+    epicentrosHtml +
+    '  </div>\n' +
+    '  <div class="nav-actions">\n' +
+    '    <a href="?view=webapp" class="btn-nav primary">📊 Ir al Dashboard</a>\n' +
+    '    <button class="btn-nav" onclick="cerrar()">✕ Cerrar</button>\n' +
+    '  </div>\n' +
+    '  <script>\n' +
+    '    if (window.Telegram && window.Telegram.WebApp) {\n' +
+    '      Telegram.WebApp.ready();\n' +
+    '      Telegram.WebApp.expand();\n' +
+    '    }\n' +
+    '    function cerrar() {\n' +
+    '      if (window.Telegram && window.Telegram.WebApp) {\n' +
+    '        Telegram.WebApp.close();\n' +
+    '      } else {\n' +
+    '        window.close();\n' +
+    '      }\n' +
+    '    }\n' +
+    '    var puntos = ' + puntosJson + ';\n' +
+    '    var map = L.map("map", { zoomControl: true });\n' +
+    '    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {\n' +
+    '      attribution: "&copy; OpenStreetMap &copy; CARTO",\n' +
+    '      maxZoom: 19\n' +
+    '    }).addTo(map);\n' +
+    '    if (puntos && puntos.length > 0) {\n' +
+    '      var heatPoints = puntos.map(function(p) { return [p.lat, p.lng, p.peso || 0.5]; });\n' +
+    '      L.heatLayer(heatPoints, {\n' +
+    '        radius: 28,\n' +
+    '        blur: 18,\n' +
+    '        maxZoom: 16,\n' +
+    '        minOpacity: 0.35,\n' +
+    '        gradient: { 0.2: "#38bdf8", 0.4: "#22c55e", 0.6: "#eab308", 0.8: "#f97316", 1.0: "#ef4444" }\n' +
+    '      }).addTo(map);\n' +
+    '      puntos.forEach(function(p) {\n' +
+    '        var marker = L.circleMarker([p.lat, p.lng], {\n' +
+    '          radius: 7,\n' +
+    '          fillColor: "#8b5cf6",\n' +
+    '          color: "#ffffff",\n' +
+    '          weight: 1.5,\n' +
+    '          opacity: 0.9,\n' +
+    '          fillOpacity: 0.85\n' +
+    '        }).addTo(map);\n' +
+    '        var popupHtml = "<div style=\\"min-width:180px; padding:2px; font-family:sans-serif;\\">" +\n' +
+    '          "<div style=\\"font-weight:700; font-size:13px; color:#fff; margin-bottom:3px;\\">🏪 " + p.comercio + "</div>" +\n' +
+    '          "<div style=\\"font-size:16px; font-weight:800; color:#22c55e; margin-bottom:4px;\\">" + p.montoFmt + "</div>" +\n' +
+    '          "<div style=\\"color:#9ca3af; font-size:11px;\\">📅 " + p.fecha + "</div>" +\n' +
+    '          "<div style=\\"color:#a5b4fc; font-size:11px;\\">🏷️ " + p.categoria + " • 💳 " + p.tarjeta + "</div>" +\n' +
+    '          (p.ubicacion ? "<div style=\\"color:#cbd5e1; font-size:10px; margin-top:4px; padding-top:3px; border-top:1px solid #374151;\\">📍 " + p.ubicacion + "</div>" : "") +\n' +
+    '          "</div>";\n' +
+    '        marker.bindPopup(popupHtml);\n' +
+    '      });\n' +
+    '      if (puntos.length === 1) {\n' +
+    '        map.setView([puntos[0].lat, puntos[0].lng], 15);\n' +
+    '      } else {\n' +
+    '        var bounds = L.latLngBounds(puntos.map(function(p) { return [p.lat, p.lng]; }));\n' +
+    '        map.fitBounds(bounds.pad(0.25));\n' +
+    '      }\n' +
+    '    } else {\n' +
+    '      map.setView([' + defLat + ', ' + defLng + '], ' + defZoom + ');\n' +
+    '    }\n' +
+    '  </script>\n' +
+    '</body>\n' +
+    '</html>';
+}
+
+// ==========================================
+// CONSULTA DE PUNTOS GEOLOCALIZADOS PARA HEATMAP
+// ==========================================
+function obtenerPuntosMapaCalor() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+  if (!sheet || sheet.getLastRow() <= 1) {
+    return { puntos: [], totalGastado: 0, totalGastadoFmt: "$0 COP", conteo: 0, epicentros: [] };
+  }
+
+  var rows = sheet.getDataRange().getValues();
+  var headers = rows[0] || [];
+  var tieneColTipo = headers.length > 1 && headers[1].toString().trim().toLowerCase() === "tipo";
+
+  var puntos = [];
+  var totalGastado = 0;
+  var conteo = 0;
+  var porLugar = {};
+  var maxMonto = 1;
+
+  for (var i = 1; i < rows.length; i++) {
+    var fila = rows[i];
+    var fechaStr = fila[0];
+    var tipoStr = tieneColTipo ? (fila[1] || "").toString().toLowerCase() : "";
+    var comercio = tieneColTipo ? (fila[2] || "Comercio").toString() : (fila[1] || "Comercio").toString();
+    var monto = tieneColTipo ? (parseFloat(fila[3]) || 0) : (parseFloat(fila[2]) || 0);
+    var tarjeta = tieneColTipo ? (fila[4] || "Apple Pay").toString() : (fila[3] || "Apple Pay").toString();
+    var categoria = tieneColTipo ? (fila[5] || "General").toString() : (fila[4] || "General").toString();
+
+    var lat = parseFloat(fila[8]);
+    var lng = parseFloat(fila[9]);
+    var ubicacion = (fila[10] || "").toString().trim();
+
+    var esGasto = tipoStr.indexOf("gasto") !== -1 || tipoStr === "";
+
+    if (esGasto && !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0 && monto > 0) {
+      if (monto > maxMonto) maxMonto = monto;
+      totalGastado += monto;
+      conteo++;
+
+      var claveLugar = ubicacion || comercio || "Zona de gasto";
+      if (!porLugar[claveLugar]) {
+        porLugar[claveLugar] = { lugar: claveLugar, total: 0, transacciones: 0, lat: lat, lng: lng };
+      }
+      porLugar[claveLugar].total += monto;
+      porLugar[claveLugar].transacciones++;
+
+      var fFormateada = "";
+      try {
+        var d = new Date(fechaStr);
+        if (!isNaN(d.getTime())) {
+          fFormateada = Utilities.formatDate(d, CONFIG.ZONA_HORARIA, "dd/MM/yyyy HH:mm");
+        } else {
+          fFormateada = fechaStr.toString();
+        }
+      } catch (eF) {
+        fFormateada = fechaStr.toString();
+      }
+
+      puntos.push({
+        lat: lat,
+        lng: lng,
+        monto: monto,
+        montoFmt: "$" + formatearCOP(monto) + " COP",
+        comercio: comercio,
+        tarjeta: tarjeta,
+        categoria: categoria,
+        ubicacion: ubicacion,
+        fecha: fFormateada
+      });
+    }
+  }
+
+  for (var p = 0; p < puntos.length; p++) {
+    puntos[p].peso = Math.min(Math.max((puntos[p].monto / maxMonto), 0.25), 1.0);
+  }
+
+  var epicentrosArr = [];
+  for (var k in porLugar) {
+    epicentrosArr.push(porLugar[k]);
+  }
+  epicentrosArr.sort(function(a, b) { return b.total - a.total; });
+
+  return {
+    puntos: puntos,
+    totalGastado: totalGastado,
+    totalGastadoFmt: "$" + formatearCOP(totalGastado) + " COP",
+    conteo: conteo,
+    epicentros: epicentrosArr.slice(0, 5)
+  };
+}
+
+// ==========================================
+// UTILIDADES DE UBICACIÓN, MONEDA Y RUTAS
+// ==========================================
+function getUrlWebAppConParametros(params) {
+  var baseUrl = "";
+  try {
+    if (typeof ScriptApp !== "undefined" && ScriptApp.getService && ScriptApp.getService().getUrl()) {
+      baseUrl = ScriptApp.getService().getUrl();
+    }
+  } catch (e) {}
+  if (!baseUrl || baseUrl.indexOf("TU_DEPLOYMENT_ID") !== -1) {
+    baseUrl = (CONFIG.WEB_APP_URL && CONFIG.WEB_APP_URL.indexOf("TU_DEPLOYMENT_ID") === -1) 
+      ? CONFIG.WEB_APP_URL.split("?")[0] 
+      : "https://script.google.com/macros/s/AKfycbxjz1Y8xXd5vv6D3PuNxw16LI3UQByPnb_m3pCoDw9FTacTz7QVTmHmtUXQCaWT8qQ1LA/exec";
+  }
+  return baseUrl + (params ? (baseUrl.indexOf("?") !== -1 ? "&" : "?") + params : "");
+}
+
+function sanitizarImporteCOP(valor) {
+  if (valor === null || valor === undefined) return 0;
+  if (typeof valor === "number") return Math.round(valor);
+
+  var str = valor.toString().trim();
+  str = str.replace(/[$A-Za-z\s]/g, "");
+  if (!str) return 0;
+
+  if (str.indexOf(".") !== -1 && str.indexOf(",") !== -1) {
+    if (str.lastIndexOf(",") > str.lastIndexOf(".")) {
+      str = str.split(",")[0].replace(/\./g, "");
+    } else {
+      str = str.split(".")[0].replace(/,/g, "");
+    }
+  } else if (str.indexOf(",") !== -1) {
+    var partesC = str.split(",");
+    if (partesC.length === 2 && partesC[1].length === 2) {
+      str = partesC[0];
+    } else {
+      str = str.replace(/,/g, "");
+    }
+  } else if (str.indexOf(".") !== -1) {
+    var partesP = str.split(".");
+    if (partesP.length === 2 && partesP[1].length === 2) {
+      str = partesP[0];
+    } else {
+      str = str.replace(/\./g, "");
+    }
+  }
+
+  var num = parseFloat(str.replace(/[^0-9]/g, "")) || 0;
+  return Math.round(num);
+}
+
+function procesarUbicacionTransaccion(latVal, lngVal, ubiNombre) {
+  var lat = null;
+  var lng = null;
+  var nombre = (ubiNombre || "").toString().trim();
+
+  if (latVal !== null && latVal !== undefined && latVal !== "") {
+    var pLat = parseFloat(latVal);
+    if (!isNaN(pLat)) lat = pLat;
+  }
+  if (lngVal !== null && lngVal !== undefined && lngVal !== "") {
+    var pLng = parseFloat(lngVal);
+    if (!isNaN(pLng)) lng = pLng;
+  }
+
+  // Geocodificación inversa nativa si tenemos coordenadas y no hay nombre legible
+  if (lat !== null && lng !== null && (!nombre || nombre.length < 3 || nombre.toLowerCase() === "mi ubicación")) {
+    try {
+      var geocoder = Maps.newGeocoder();
+      var response = geocoder.reverseGeocode(lat, lng);
+      if (response && response.status === "OK" && response.results && response.results.length > 0) {
+        var formatted = response.results[0].formatted_address || "";
+        nombre = formatted.split(",").slice(0, 2).join(",").trim() || formatted;
+      }
+    } catch (eGeo) {
+      Logger.log("Aviso en geocodificación inversa: " + eGeo.toString());
+    }
+  }
+
+  return {
+    lat: lat,
+    lng: lng,
+    ubicacion: nombre
+  };
+}
+
+function asegurarColumnasUbicacion(sheet) {
+  if (!sheet) return;
+  try {
+    var lastCol = sheet.getLastColumn();
+    if (lastCol < 11) {
+      var maxCols = sheet.getMaxColumns();
+      if (maxCols < 11) {
+        sheet.insertColumnsAfter(maxCols, 11 - maxCols);
+      }
+      var headers = sheet.getRange(1, 1, 1, Math.max(lastCol, 1)).getValues()[0];
+      if (lastCol < 9 || !(headers[8])) {
+        sheet.getRange(1, 9).setValue("Latitud");
+      }
+      if (lastCol < 10 || !(headers[9])) {
+        sheet.getRange(1, 10).setValue("Longitud");
+      }
+      if (lastCol < 11 || !(headers[10])) {
+        sheet.getRange(1, 11).setValue("Ubicación");
+      }
+      sheet.getRange("A1:K1").setFontWeight("bold").setBackground("#1A73E8").setFontColor("#FFFFFF");
+    }
+  } catch (eCol) {
+    Logger.log("Error asegurando columnas de ubicación: " + eCol.toString());
+  }
+}
+
+// ==========================================
 // ENDPOINT GET (Health Check y Mini App)
 // ==========================================
 function doGet(e) {
   var conf = obtenerConfiguracionActual();
   if (e && e.parameter) {
+    if (e.parameter.view === "mapa" || e.parameter.mapa === "true") {
+      return servirWebAppMapaCalor(conf);
+    }
+    if (e.parameter.api === "puntos_mapa") {
+      return ContentService.createTextOutput(JSON.stringify(obtenerPuntosMapaCalor()))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    if (e.parameter.check_keys === "true") {
+      var keys = PropertiesService.getScriptProperties().getKeys();
+      var safeProps = {};
+      for (var k = 0; k < keys.length; k++) {
+        var keyName = keys[k];
+        var val = PropertiesService.getScriptProperties().getProperty(keyName) || "";
+        safeProps[keyName] = val ? (val.length > 8 ? val.substring(0, 4) + "..." + val.substring(val.length - 4) : "SET") : "EMPTY";
+      }
+      return ContentService.createTextOutput(JSON.stringify({ keys: keys, props: safeProps })).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (e.parameter.re_register_tg === "true") {
+      var targetUrl = e.parameter.url || "https://script.google.com/macros/s/AKfycbxjz1Y8xXd5vv6D3PuNxw16LI3UQByPnb_m3pCoDw9FTacTz7QVTmHmtUXQCaWT8qQ1LA/exec";
+      var resReg = UrlFetchApp.fetch("https://api.telegram.org/bot" + CONFIG.TELEGRAM_TOKEN + "/setWebhook?url=" + encodeURIComponent(targetUrl));
+      return ContentService.createTextOutput(resReg.getContentText()).setMimeType(ContentService.MimeType.JSON);
+    }
     if (e.parameter.view === "webapp" || e.parameter.webapp === "true") {
       return servirWebAppDashboard(conf);
     }
@@ -408,6 +855,28 @@ function doGet(e) {
         reporteCierreMes: scoreMsg
       })).setMimeType(ContentService.MimeType.JSON);
     }
+    if (e.parameter.limpiar_pruebas === "true") {
+      var ssL = SpreadsheetApp.getActiveSpreadsheet();
+      var shT = ssL.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+      var filasBorradas = 0;
+      if (shT && shT.getLastRow() > 1) {
+        var numR = shT.getLastRow();
+        for (var rIdx = numR; rIdx >= 2; rIdx--) {
+          var valTipo = (shT.getRange(rIdx, 2).getValue() || "").toString().trim();
+          var valCom = (shT.getRange(rIdx, 3).getValue() || "").toString().trim();
+          if (valTipo === "Sin comercio" || valCom === "Comercio no especificado" || valTipo === "" || valCom === "0") {
+            shT.deleteRow(rIdx);
+            filasBorradas++;
+          }
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: "ok", filasBorradas: filasBorradas }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    if (e.parameter.importe !== undefined || e.parameter.monto !== undefined || (e.parameter.comercio && e.parameter.comercio !== "")) {
+      var resGet = procesarTransaccionApplePay(e.parameter);
+      return HtmlService.createHtmlOutput(JSON.stringify(resGet));
+    }
   }
   var radarActual = analizarGastosHormigaYDesviacion(conf);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -457,16 +926,194 @@ function doGet(e) {
 }
 
 // ==========================================
+// ==========================================
+// PROCESADOR ROBUSTO DE GASTOS APPLE PAY
+// ==========================================
+function procesarTransaccionApplePay(payload) {
+  if (!payload) return { status: "error", error: "Payload vacío" };
+  if (payload.entrada) {
+    try {
+      payload = typeof payload.entrada === 'string' ? JSON.parse(payload.entrada) : payload.entrada;
+    } catch(eEnt) {}
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+  if (!sheet) {
+    inicializarHojas();
+    sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+  }
+  asegurarColumnasUbicacion(sheet);
+
+  // Sanitización robusta de comercio (busca variaciones)
+  var rawCom = payload.comercio !== undefined ? payload.comercio : 
+              (payload.Comercio !== undefined ? payload.Comercio : 
+              (payload.commerce !== undefined ? payload.commerce : 
+              (payload.store !== undefined ? payload.store : null)));
+  var comercio = "Comercio no especificado";
+  if (rawCom) {
+    if (typeof rawCom === "object") {
+      comercio = rawCom.name || rawCom.nombre || "Comercio no especificado";
+    } else {
+      comercio = rawCom.toString().trim() || "Comercio no especificado";
+    }
+  }
+
+  // Sanitización robusta de importe en pesos colombianos
+  var rawMontoVal = payload.importe !== undefined ? payload.importe : 
+                   (payload.Importe !== undefined ? payload.Importe : 
+                   (payload.monto !== undefined ? payload.monto : 
+                   (payload.Monto !== undefined ? payload.Monto : 
+                   (payload.cantidad !== undefined ? payload.cantidad : 
+                   (payload.Cantidad !== undefined ? payload.Cantidad : 0)))));
+  var importeNum = sanitizarImporteCOP(rawMontoVal);
+
+  // Sanitización de tarjeta
+  var rawTarj = payload.tarjeta !== undefined ? payload.tarjeta : 
+               (payload.Tarjeta !== undefined ? payload.Tarjeta : 
+               (payload.medio !== undefined ? payload.medio : 
+               (payload.Medio !== undefined ? payload.Medio : 
+               (payload.card !== undefined ? payload.card : null))));
+  var tarjeta = "Apple Pay";
+  if (rawTarj) {
+    if (typeof rawTarj === "object") {
+      tarjeta = rawTarj.name || rawTarj.nombre || "Apple Pay";
+    } else {
+      tarjeta = rawTarj.toString().trim() || "Apple Pay";
+    }
+  }
+
+  // Sanitización de categoría
+  var rawCat = payload.categoria !== undefined ? payload.categoria : 
+              (payload.Categoria !== undefined ? payload.Categoria : 
+              (payload.category !== undefined ? payload.category : "General"));
+  var categoria = "General";
+  if (rawCat) {
+    var cStr = rawCat.toString().trim();
+    if (cStr.length > 0 && cStr.length < 35 && cStr.indexOf("{") === -1 && cStr.indexOf("Entrada de atajo") === -1) {
+      categoria = cStr;
+    }
+  }
+
+  // Ubicación GPS (lat, lng, ubicacion)
+  var latVal = payload.lat !== undefined ? payload.lat : 
+              (payload.Lat !== undefined ? payload.Lat : 
+              (payload.latitud !== undefined ? payload.latitud : 
+              (payload.Latitud !== undefined ? payload.Latitud : 
+              (payload.latitude !== undefined ? payload.latitude : null))));
+
+  var lngVal = payload.lng !== undefined ? payload.lng : 
+              (payload.Lng !== undefined ? payload.Lng : 
+              (payload.Ing !== undefined ? payload.Ing : 
+              (payload.ing !== undefined ? payload.ing : 
+              (payload.longitud !== undefined ? payload.longitud : 
+              (payload.Longitud !== undefined ? payload.Longitud : 
+              (payload.longitude !== undefined ? payload.longitude : 
+              (payload.lon !== undefined ? payload.lon : null)))))));
+
+  var ubiNombre = payload.ubicacion || payload.Ubicacion || payload.direccion || payload.Direccion || payload.location || payload.nombre || payload.Nombre || "";
+
+  var datosUbicacion = procesarUbicacionTransaccion(latVal, lngVal, ubiNombre);
+
+  var fechaActual = new Date();
+  var fechaTexto = Utilities.formatDate(fechaActual, CONFIG.ZONA_HORARIA, "yyyy-MM-dd HH:mm:ss");
+  var idTimestamp = new Date().getTime();
+
+  sheet.appendRow([
+    payload.fecha || fechaTexto,
+    "🔴 Gasto",
+    comercio,
+    importeNum,
+    tarjeta,
+    categoria,
+    "Apple Pay (iOS Shortcut)",
+    idTimestamp,
+    datosUbicacion.lat !== null ? datosUbicacion.lat : "",
+    datosUbicacion.lng !== null ? datosUbicacion.lng : "",
+    datosUbicacion.ubicacion || ""
+  ]);
+
+  // Guardar ID en cache para vinculación inmediata si se requiere
+  var cacheScript = CacheService.getScriptCache();
+  cacheScript.put("ultimo_gasto_id", idTimestamp.toString(), 600);
+
+  // Descontar automáticamente del saldo en cuenta bancaria
+  var nuevoSaldo = 0;
+  if (importeNum > 0) {
+    nuevoSaldo = descontarSaldoCuenta(importeNum);
+  }
+
+  // Notificación inmediata a Telegram con Ubicación, Conversor a Horas de Trabajo y Botón Ver en Mapa
+  if (CONFIG.TELEGRAM_CHAT_ID && CONFIG.TELEGRAM_CHAT_ID !== "TU_CHAT_ID" && CONFIG.TELEGRAM_CHAT_ID !== "TU_TELEGRAM_CHAT_ID") {
+    var horasTrabajo = (importeNum / 19957).toFixed(1);
+    var diasCupo = (importeNum / 21190).toFixed(1);
+
+    var msgApplePay = "💳 *COMPRA CON APPLE PAY REGISTRADA*\n\n" +
+                      "💵 Monto: *$" + formatearCOP(importeNum) + " COP*\n" +
+                      "🏪 Comercio: *" + comercio + "*\n" +
+                      "💳 Tarjeta/Medio: *" + tarjeta + "*\n" +
+                      (datosUbicacion.ubicacion ? "📍 Ubicación: *" + datosUbicacion.ubicacion + "*\n" : "") +
+                      "💰 Saldo restante en cuenta: ||*$" + formatearCOP(nuevoSaldo || 0) + " COP*||\n\n" +
+                      "⏳ *Impacto en Horas de Trabajo:*\n" +
+                      "• Equivale a *" + horasTrabajo + " horas* de tu trabajo (~*" + diasCupo + " días* de cupo diario).";
+
+    var urlMapa = getUrlWebAppConParametros("view=mapa");
+    var inlineKb = [
+      [
+        { text: "↩️ Deshacer Gasto", callback_data: "cb:deshacer:" + idTimestamp },
+        { text: "🗺️ Ver en Mapa", web_app: { url: urlMapa } }
+      ],
+      [
+        { text: "💳 Ver Saldo", callback_data: "cb:saldo" },
+        { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
+      ]
+    ];
+
+    sendTelegram(CONFIG.TELEGRAM_CHAT_ID, msgApplePay, inlineKb);
+  }
+
+  // Verificar límites y enviar alerta si sobrepasa
+  if (importeNum > 0) {
+    checkBudgetAlert(importeNum, comercio);
+  }
+
+  return {
+    status: "success",
+    monto: importeNum,
+    comercio: comercio,
+    ubicacion: datosUbicacion.ubicacion || null
+  };
+}
+
+// ==========================================
 // ROUTER PRINCIPAL POST (Apple Pay, Textos, Audios y Fotos)
 // ==========================================
 function doPost(e) {
   try {
-    if (!e || !e.postData || !e.postData.contents) {
-      return HtmlService.createHtmlOutput("OK");
+    var raw = (e && e.postData && e.postData.contents) ? e.postData.contents : "";
+    var data = {};
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch (eParse) {
+        if (typeof raw === "string" && raw.indexOf("=") !== -1) {
+          var pairs = raw.split("&");
+          for (var p = 0; p < pairs.length; p++) {
+            var kv = pairs[p].split("=");
+            if (kv.length === 2) {
+              data[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1].replace(/\+/g, " "));
+            }
+          }
+        }
+      }
+    }
+    if ((!data || Object.keys(data).length === 0) && e && e.parameter) {
+      data = e.parameter;
     }
 
-    var raw = e.postData.contents;
-    var data = JSON.parse(raw);
+    if (!data || Object.keys(data).length === 0) {
+      return HtmlService.createHtmlOutput("OK");
+    }
 
     // -------------------------------------------------------------
     // CASO 1: Mensajes desde Telegram (Texto, Audio, Foto)
@@ -486,7 +1133,7 @@ function doPost(e) {
       cache.put(updateKey, "PROCESSING", 300);
 
       // Validación de seguridad por Chat ID
-      if (CONFIG.TELEGRAM_CHAT_ID && CONFIG.TELEGRAM_CHAT_ID !== "TU_CHAT_ID" && chatId !== CONFIG.TELEGRAM_CHAT_ID.toString()) {
+      if (CONFIG.TELEGRAM_CHAT_ID && CONFIG.TELEGRAM_CHAT_ID !== "TU_CHAT_ID" && CONFIG.TELEGRAM_CHAT_ID !== "TU_TELEGRAM_CHAT_ID" && chatId !== CONFIG.TELEGRAM_CHAT_ID.toString()) {
         sendTelegram(chatId, "⛔ *Acceso no autorizado.* Este bot es privado para gestión financiera personal.");
         return HtmlService.createHtmlOutput("OK");
       }
@@ -506,6 +1153,12 @@ function doPost(e) {
       // 1.2 Si es una Nota de Voz o Audio
       if (msg.voice || msg.audio) {
         handleTelegramVoice(msg);
+        return HtmlService.createHtmlOutput("OK");
+      }
+
+      // 1.2b Si es una Ubicación enviada por Telegram (📍)
+      if (msg.location) {
+        handleTelegramLocation(msg);
         return HtmlService.createHtmlOutput("OK");
       }
 
@@ -529,78 +1182,8 @@ function doPost(e) {
     // -------------------------------------------------------------
     // CASO 2: Transacciones desde Apple Pay (iOS Shortcuts)
     // -------------------------------------------------------------
-    var payload = data;
-    if (payload.entrada) {
-      payload = typeof payload.entrada === 'string' ? JSON.parse(payload.entrada) : payload.entrada;
-    }
-
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
-    if (!sheet) {
-      inicializarHojas();
-      sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
-    }
-
-    // Sanitización de importe en pesos colombianos
-    var rawImporte = payload.importe ? payload.importe.toString().replace(/[^0-9.]/g, '') : "0";
-    var importeNum = parseFloat(rawImporte) || 0;
-
-    var fechaActual = new Date();
-    var fechaTexto = Utilities.formatDate(fechaActual, CONFIG.ZONA_HORARIA, "yyyy-MM-dd HH:mm:ss");
-    var idTimestamp = new Date().getTime();
-
-    sheet.appendRow([
-      payload.fecha || fechaTexto,
-      "🔴 Gasto",
-      payload.comercio || "Sin comercio",
-      importeNum,
-      payload.tarjeta || "Apple Pay",
-      payload.categoria || "General",
-      "Apple Pay (iOS Shortcut)",
-      idTimestamp
-    ]);
-
-    // Descontar automáticamente del saldo en cuenta bancaria
-    var nuevoSaldo = 0;
-    if (importeNum > 0) {
-      nuevoSaldo = descontarSaldoCuenta(importeNum);
-    }
-
-    // Notificación inmediata a Telegram con Conversor a Horas de Trabajo y Botón Deshacer
-    if (CONFIG.TELEGRAM_CHAT_ID && CONFIG.TELEGRAM_CHAT_ID !== "TU_CHAT_ID") {
-      var horasTrabajo = (importeNum / 19957).toFixed(1);
-      var diasCupo = (importeNum / 21190).toFixed(1);
-      var comercio = payload.comercio || "Comercio no especificado";
-
-      var msgApplePay = "💳 *COMPRA CON APPLE PAY REGISTRADA*\n\n" +
-                        "💵 Monto: *$" + formatearCOP(importeNum) + " COP*\n" +
-                        "🏪 Comercio: *" + comercio + "*\n" +
-                        "💳 Tarjeta/Medio: *" + (payload.tarjeta || "Apple Pay") + "*\n" +
-                        "💰 Saldo restante en cuenta: ||*$" + formatearCOP(nuevoSaldo || 0) + " COP*||\n\n" +
-                        "⏳ *Impacto en Horas de Trabajo:*\n" +
-                        "• Equivale a *" + horasTrabajo + " horas* de tu trabajo (~*" + diasCupo + " días* de cupo diario).";
-
-      var inlineKb = [
-        [
-          { text: "↩️ Deshacer Gasto", callback_data: "cb:deshacer:" + idTimestamp },
-          { text: "💳 Ver Saldo", callback_data: "cb:saldo" }
-        ],
-        [
-          { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
-        ]
-      ];
-
-      sendTelegram(CONFIG.TELEGRAM_CHAT_ID, msgApplePay, inlineKb);
-    }
-
-    // Verificar límites y enviar alerta si sobrepasa
-    checkBudgetAlert(importeNum, payload.comercio || "Comercio no especificado");
-
-    return HtmlService.createHtmlOutput(JSON.stringify({
-      status: "success",
-      monto: importeNum,
-      comercio: payload.comercio
-    }));
+    var resultado = procesarTransaccionApplePay(data);
+    return HtmlService.createHtmlOutput(JSON.stringify(resultado));
 
   } catch (error) {
     Logger.log("Error en doPost: " + error.toString());
@@ -608,6 +1191,162 @@ function doPost(e) {
       status: "error",
       error: error.toString()
     }));
+  }
+}
+
+// ==========================================
+// SOLICITAR UBICACIÓN DESPUÉS DE REGISTRAR UN GASTO
+// ==========================================
+function solicitarUbicacionPostGasto(chatId) {
+  try {
+    // Verificar si ya hay una ubicación pendiente (el usuario mandó ubicación ANTES del gasto)
+    var cache = CacheService.getScriptCache();
+    var yaConUbi = cache.get("pending_location_" + chatId);
+    if (yaConUbi) return; // Ya tiene ubicación, no preguntar
+
+    var token = CONFIG.TELEGRAM_TOKEN;
+    if (!token || token === "TU_TELEGRAM_BOT_TOKEN") return;
+
+    var url = "https://api.telegram.org/bot" + token + "/sendMessage";
+    var payload = {
+      chat_id: chatId,
+      text: "📍 <b>¿Dónde estás?</b>\nComparte tu ubicación para agregarla al gasto en tu mapa de calor. Puedes omitirlo si prefieres.",
+      parse_mode: "HTML",
+      reply_markup: JSON.stringify({
+        keyboard: [
+          [{ text: "📍 Compartir Ubicación", request_location: true }],
+          [{ text: "⏭️ Omitir" }]
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true
+      })
+    };
+
+    UrlFetchApp.fetch(url, {
+      method: "POST",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    Logger.log("Error solicitando ubicación: " + e.toString());
+  }
+}
+
+// ==========================================
+// REMOVER TECLADO DE UBICACIÓN (después de recibir o saltar)
+// ==========================================
+function removerTecladoUbicacion(chatId, mensajeConfirmacion) {
+  try {
+    var token = CONFIG.TELEGRAM_TOKEN;
+    if (!token || token === "TU_TELEGRAM_BOT_TOKEN") return;
+
+    var url = "https://api.telegram.org/bot" + token + "/sendMessage";
+    var payload = {
+      chat_id: chatId,
+      text: mensajeConfirmacion,
+      parse_mode: "HTML",
+      reply_markup: JSON.stringify({ remove_keyboard: true })
+    };
+
+    UrlFetchApp.fetch(url, {
+      method: "POST",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    Logger.log("Error removiendo teclado: " + e.toString());
+  }
+}
+
+// ==========================================
+// GESTOR DE UBICACIÓN RECIBIDA POR TELEGRAM (📍)
+// ==========================================
+function handleTelegramLocation(msg) {
+  var chatId = msg.chat.id.toString();
+  var loc = msg.location;
+  if (!loc || loc.latitude === undefined || loc.longitude === undefined) {
+    sendTelegram(chatId, "⚠️ No se recibieron coordenadas válidas.");
+    return;
+  }
+
+  var lat = parseFloat(loc.latitude);
+  var lng = parseFloat(loc.longitude);
+  var ubi = procesarUbicacionTransaccion(lat, lng, "");
+  var nombreLugar = ubi.ubicacion || (lat.toFixed(4) + ", " + lng.toFixed(4));
+
+  var cache = CacheService.getScriptCache();
+  var ultimoId = cache.get("ultimo_gasto_id");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+
+  var vinculado = false;
+  var comercioGasto = "";
+  var montoGasto = 0;
+
+  if (sheet && sheet.getLastRow() > 1) {
+    var rows = sheet.getDataRange().getValues();
+    var targetRow = -1;
+
+    if (ultimoId) {
+      for (var i = rows.length - 1; i >= 1; i--) {
+        var rowId = (rows[i][7] || "").toString();
+        if (rowId === ultimoId) {
+          targetRow = i + 1;
+          comercioGasto = rows[i][2] || "Compra";
+          montoGasto = parseFloat(rows[i][3]) || 0;
+          break;
+        }
+      }
+    } else {
+      var hoyMs = new Date().getTime();
+      for (var j = rows.length - 1; j >= 1; j--) {
+        var tFila = (rows[j][1] || "").toString().toLowerCase();
+        if (tFila.indexOf("gasto") !== -1 || tFila === "") {
+          var fVal = rows[j][0];
+          var fDate = new Date(fVal);
+          if (!isNaN(fDate.getTime()) && (hoyMs - fDate.getTime() < 15 * 60 * 1000)) {
+            targetRow = j + 1;
+            comercioGasto = rows[j][2] || "Compra";
+            montoGasto = parseFloat(rows[j][3]) || 0;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetRow > 1) {
+      asegurarColumnasUbicacion(sheet);
+      sheet.getRange(targetRow, 9).setValue(lat);
+      sheet.getRange(targetRow, 10).setValue(lng);
+      sheet.getRange(targetRow, 11).setValue(nombreLugar);
+      vinculado = true;
+    }
+  }
+
+  var webAppUrlMapa = getUrlWebAppConParametros("view=mapa");
+  if (vinculado) {
+    // Remover el teclado de solicitud de ubicación
+    removerTecladoUbicacion(chatId, "✅ Ubicación recibida correctamente.");
+    var msgExito = "📍 *¡Ubicación vinculada a tu gasto!*\n\n" +
+                   "🏪 Comercio: *" + comercioGasto + "*\n" +
+                   "💵 Monto: *$" + formatearCOP(montoGasto) + " COP*\n" +
+                   "🗺️ Lugar: *" + nombreLugar + "*\n\n" +
+                   "Ya puedes visualizarlo en tu mapa de calor interactivo.";
+    sendTelegram(chatId, msgExito, [
+      [
+        { text: "🗺️ Ver Mapa de Calor", web_app: { url: webAppUrlMapa } },
+        { text: "💳 Ver Saldo", callback_data: "cb:saldo" }
+      ]
+    ]);
+  } else {
+    cache.put("pending_location_" + chatId, JSON.stringify({ lat: lat, lng: lng, ubicacion: nombreLugar }), 900);
+    var msgPendiente = "📍 *Ubicación recibida:*\n*" + nombreLugar + "*\n\n" +
+                       "¿Cuánto gastaste aquí? Puedes responder con:\n" +
+                       "`/gasto 25000 Almuerzo` o `25000 Café`\n" +
+                       "y quedará guardado automáticamente con estas coordenadas.";
+    sendTelegram(chatId, msgPendiente);
   }
 }
 
@@ -632,18 +1371,26 @@ function handleTelegramMessage(msg) {
   else if (textLower === "🏆 cierre de mes" || textLower === "cierre de mes" || textLower === "cierre") text = "/cierre_mes";
   else if (textLower === "☀️ briefing" || textLower === "briefing") text = "/briefing";
   else if (textLower === "🟣 tarjeta nu" || textLower === "tarjeta nu" || textLower === "tarjeta" || textLower === "nu") text = "/deuda";
+  else if (textLower === "🗺️ mapa de calor" || textLower === "mapa de calor" || textLower === "mapa" || textLower === "/mapa" || textLower === "/calor") text = "/mapa";
+  else if (textLower === "⏭️ omitir" || textLower === "omitir") {
+    // El usuario omitió compartir ubicación después de un gasto
+    removerTecladoUbicacion(chatId, "👍 Sin problema, gasto registrado sin ubicación.");
+    return;
+  }
 
   // 1. Comando /start
   if (text === "/start") {
     var menu = "👋 *¡Hola! Soy tu Asesor Financiero Personal y CFO Privado con IA.*\n\n" +
                "🚀 *Formas de registrar tus transacciones:*\n" +
-               "💳 *Apple Pay:* Automático en tiempo real al pagar con tu iPhone.\n" +
+               "💳 *Apple Pay:* Automático en tiempo real con GPS al pagar con tu iPhone.\n" +
                "📸 *Capturas de Pantalla:* Envíame fotos de comprobantes (*Nequi, Davivienda, Nu, Bancolombia*).\n" +
                "🎙️ *Notas de Voz:* Envíame un audio diciendo lo que gastaste o consultando dudas.\n" +
+               "📍 *Ubicación:* Envíame un pin de ubicación para geolocalizar tu última compra.\n" +
                "💸 *Manual:* Usa `/gasto 25000 Almuerzo`.\n\n" +
                "📊 *Comandos de Consulta Rápida:*\n" +
                "📖 /comandos - Ver lista completa y detallada de todos los comandos\n" +
                "📱 /menu - Activar o actualizar el teclado de botones rápidos en pantalla\n" +
+               "🗺️ /mapa - Ver mapa de calor interactivo de lugares donde más gastas\n" +
                "🏦 /bolsillos - Ver saldos en cada bolsillo Davivienda y reglas de fondeo\n" +
                "💳 /saldo - Saldo disponible, bolsillos y saldo total en Davivienda\n" +
                "⚖️ `/cuotas [monto] [cuotas]` - Calculadora anti-intereses y horas de trabajo\n" +
@@ -672,6 +1419,10 @@ function handleTelegramMessage(msg) {
 
     var inlineKbStart = [
       [
+        { text: "🗺️ Mapa de Calor", web_app: { url: getUrlWebAppConParametros("view=mapa") } },
+        { text: "📱 Dashboard Web", web_app: { url: getUrlWebAppConParametros("view=webapp") } }
+      ],
+      [
         { text: "🏦 Ver Bolsillos", callback_data: "cb:bolsillos" },
         { text: "💳 Saldo en Cuenta", callback_data: "cb:saldo" }
       ],
@@ -697,7 +1448,45 @@ function handleTelegramMessage(msg) {
     return;
   }
 
-  // 1.0b Comando /menu o /teclado
+  // 1.0b Comando /mapa o /calor
+  if (text === "/mapa" || text.startsWith("/mapa") || text === "/calor") {
+    var datosMapa = obtenerPuntosMapaCalor();
+    var urlMapa = getUrlWebAppConParametros("view=mapa");
+
+    var msgMapa = "🗺️ *MAPA DE CALOR DE GASTOS Y SALIDAS*\n\n" +
+                  "He analizado tus transacciones geolocalizadas con Apple Pay y Telegram:\n\n" +
+                  "• 📍 *Compras Mapeadas:* *" + datosMapa.conteo + " gastos*\n" +
+                  "• 💵 *Total Geolocalizado:* *" + datosMapa.totalGastadoFmt + "*\n\n";
+
+    if (datosMapa.epicentros && datosMapa.epicentros.length > 0) {
+      msgMapa += "🔥 *Top Epicentros de Gasto (Donde más se te va la plata):*\n";
+      for (var ep = 0; ep < datosMapa.epicentros.length; ep++) {
+        var itemEp = datosMapa.epicentros[ep];
+        var med = (ep === 0) ? "🥇" : (ep === 1 ? "🥈" : (ep === 2 ? "🥉" : "📍"));
+        msgMapa += med + " *" + itemEp.lugar + ":* $" + formatearCOP(itemEp.total) + " COP (" + itemEp.transacciones + " compras)\n";
+      }
+      msgMapa += "\n";
+    } else {
+      msgMapa += "💡 _Aún no tienes compras geolocalizadas. Al pagar con Apple Pay en tu iPhone o enviar tu ubicación por Telegram, aparecerán aquí automáticamente._\n\n";
+    }
+
+    msgMapa += "👉 _Toca el botón de abajo para abrir el mapa interactivo en modo oscuro con puntos de calor y marcadores._";
+
+    var inlineKbMapa = [
+      [
+        { text: "🗺️ Abrir Mapa de Calor Interactivo", web_app: { url: urlMapa } }
+      ],
+      [
+        { text: "💳 Ver Mi Saldo", callback_data: "cb:saldo" },
+        { text: "📱 Dashboard Completo", web_app: { url: getUrlWebAppConParametros("view=webapp") } }
+      ]
+    ];
+
+    sendTelegram(chatId, msgMapa, inlineKbMapa);
+    return;
+  }
+
+  // 1.0c Comando /menu o /teclado
   if (text === "/menu" || text === "/teclado") {
     var msgMenu = "📱 *MENÚ PRINCIPAL Y ACCESOS RÁPIDOS*\n\n" +
                   "He fijado los accesos directos en tu teclado inferior de Telegram para que consultes y controles tus finanzas con un solo toque:\n\n" +
@@ -1289,6 +2078,11 @@ function handleTelegramMessage(msg) {
   guardarHistorialChat(chatId, historial);
 
   sendTelegram(chatId, respuestaProcesada);
+
+  // Si Gemini registró un gasto en la conversación, solicitar ubicación
+  if (/\[ACCION:\s*REGISTRAR_GASTO/i.test(respuestaIA)) {
+    solicitarUbicacionPostGasto(chatId);
+  }
 }
 
 // ==========================================
@@ -1350,6 +2144,11 @@ function handleTelegramPhoto(msg) {
 
     sendTelegram(chatId, respuestaProcesada);
 
+    // Si Gemini registró un gasto, solicitar ubicación
+    if (/\[ACCION:\s*REGISTRAR_GASTO/i.test(respuestaIA)) {
+      solicitarUbicacionPostGasto(chatId);
+    }
+
   } catch (err) {
     Logger.log("Error procesando foto: " + err.toString());
     sendTelegram(chatId, "⚠️ Ocurrió un error al analizar la imagen: " + err.toString());
@@ -1405,6 +2204,11 @@ function handleTelegramVoice(msg) {
     guardarHistorialChat(chatId, historial);
 
     sendTelegram(chatId, respuestaProcesada);
+
+    // Si Gemini registró un gasto, solicitar ubicación
+    if (/\[ACCION:\s*REGISTRAR_GASTO/i.test(respuestaIA)) {
+      solicitarUbicacionPostGasto(chatId);
+    }
 
   } catch (err) {
     Logger.log("Error procesando audio: " + err.toString());
@@ -1883,8 +2687,7 @@ function handleGastoManual(chatId, text) {
     return;
   }
 
-  var rawMonto = partes[1].replace(/[^0-9.]/g, '');
-  var monto = parseFloat(rawMonto);
+  var monto = sanitizarImporteCOP(partes[1]);
   var concepto = partes.slice(2).join(" ");
 
   if (isNaN(monto) || monto <= 0) {
@@ -1892,8 +2695,21 @@ function handleGastoManual(chatId, text) {
     return;
   }
 
+  var cache = CacheService.getScriptCache();
+  var pendingLocStr = cache.get("pending_location_" + chatId);
+  var ubiGasto = { lat: null, lng: null, ubicacion: "" };
+  if (pendingLocStr) {
+    try {
+      ubiGasto = JSON.parse(pendingLocStr);
+      cache.remove("pending_location_" + chatId);
+    } catch(eLoc) {}
+  }
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+  if (sheet) {
+    asegurarColumnasUbicacion(sheet);
+  }
   var fechaActual = new Date();
   var fechaTexto = Utilities.formatDate(fechaActual, CONFIG.ZONA_HORARIA, "yyyy-MM-dd HH:mm:ss");
   var idTimestamp = new Date().getTime();
@@ -1906,8 +2722,13 @@ function handleGastoManual(chatId, text) {
     "Efectivo / PSE",
     "Gasto Manual",
     "Telegram Bot",
-    idTimestamp
+    idTimestamp,
+    ubiGasto.lat !== null ? ubiGasto.lat : "",
+    ubiGasto.lng !== null ? ubiGasto.lng : "",
+    ubiGasto.ubicacion || ""
   ]);
+
+  cache.put("ultimo_gasto_id", idTimestamp.toString(), 600);
 
   // Descontar del saldo bancario
   var nuevoSaldo = descontarSaldoCuenta(monto);
@@ -1920,6 +2741,7 @@ function handleGastoManual(chatId, text) {
   var confirmacion = "✅ *Gasto registrado correctamente:*\n" +
                      "💵 Monto: *$" + formatearCOP(monto) + " COP*\n" +
                      "🏷️ Concepto: *" + concepto + "*\n" +
+                     (ubiGasto.ubicacion ? "📍 Ubicación: *" + ubiGasto.ubicacion + "*\n" : "") +
                      "💰 Saldo restante en cuenta: ||*$" + formatearCOP(nuevoSaldo || 0) + " COP*||\n\n" +
                      "⏳ *Impacto en Horas de Trabajo:*\n" +
                      "• Equivale a *" + horasTrabajo + " horas* de tu trabajo (~*" + diasCupo + " días* de cupo diario).";
@@ -1928,10 +2750,15 @@ function handleGastoManual(chatId, text) {
     confirmacion += "\n\n" + infoAlerta.alertaTexto;
   }
 
+  var urlMapa = getUrlWebAppConParametros("view=mapa");
   var inlineKb = [
     [
       { text: "↩️ Deshacer Gasto", callback_data: "cb:deshacer:" + idTimestamp },
-      { text: "💳 Ver Saldo", callback_data: "cb:saldo" }
+      { text: "🗺️ Ver en Mapa", web_app: { url: urlMapa } }
+    ],
+    [
+      { text: "💳 Ver Saldo", callback_data: "cb:saldo" },
+      { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
     ]
   ];
 
@@ -1941,12 +2768,13 @@ function handleGastoManual(chatId, text) {
     }
   }
 
-  inlineKb.push([
-    { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
-  ]);
-
   sendTelegram(chatId, confirmacion, inlineKb);
   checkBudgetAlert(monto, concepto);
+
+  // Solicitar ubicación si el gasto no tenía ubicación previa
+  if (!ubiGasto.lat) {
+    solicitarUbicacionPostGasto(chatId);
+  }
 }
 
 // ==========================================
@@ -4959,7 +5787,7 @@ function procesarAccionesGemini(respuesta) {
         }
       } else if (comando === "REGISTRAR_GASTO") {
         var partesGasto = params.split("|");
-        var montG = parseFloat(partesGasto[0] ? partesGasto[0].replace(/[^0-9.]/g, '') : "0");
+        var montG = sanitizarImporteCOP(partesGasto[0]);
         var comG = partesGasto[1] ? partesGasto[1].trim() : "Comercio";
         var catG = partesGasto[2] ? partesGasto[2].trim() : "General";
         var metG = partesGasto[3] ? partesGasto[3].trim() : "Nequi/Davivienda";
@@ -4973,9 +5801,22 @@ function procesarAccionesGemini(respuesta) {
           } else {
             var ss = SpreadsheetApp.getActiveSpreadsheet();
             var sheet = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+            if (sheet) {
+              asegurarColumnasUbicacion(sheet);
+            }
             var fechaActual = new Date();
             var fechaTexto = Utilities.formatDate(fechaActual, CONFIG.ZONA_HORARIA, "yyyy-MM-dd HH:mm:ss");
             var idTimestamp = new Date().getTime();
+
+            var cache = CacheService.getScriptCache();
+            var pendingLocStr = cache.get("pending_location_" + CONFIG.TELEGRAM_CHAT_ID);
+            var ubiGasto = { lat: null, lng: null, ubicacion: "" };
+            if (pendingLocStr) {
+              try {
+                ubiGasto = JSON.parse(pendingLocStr);
+                cache.remove("pending_location_" + CONFIG.TELEGRAM_CHAT_ID);
+              } catch(eLoc) {}
+            }
 
             sheet.appendRow([
               fechaTexto,
@@ -4985,8 +5826,13 @@ function procesarAccionesGemini(respuesta) {
               metG,
               catG,
               "IA Multimodal (Foto/Audio/Texto)",
-              idTimestamp
+              idTimestamp,
+              ubiGasto.lat !== null ? ubiGasto.lat : "",
+              ubiGasto.lng !== null ? ubiGasto.lng : "",
+              ubiGasto.ubicacion || ""
             ]);
+
+            cache.put("ultimo_gasto_id", idTimestamp.toString(), 600);
 
             var sald = descontarSaldoCuenta(montG);
             var horasTrabajo = (montG / 19957).toFixed(1);
@@ -4999,6 +5845,7 @@ function procesarAccionesGemini(respuesta) {
             avisoAccion = "\n\n✅ *Gasto anotado en Google Sheets:*\n" +
                           "💵 *$" + formatearCOP(montG) + " COP* en *" + comG + "* (" + catG + ")\n" +
                           "📱 Medio: *" + metG + "*\n" +
+                          (ubiGasto.ubicacion ? "📍 Ubicación: *" + ubiGasto.ubicacion + "*\n" : "") +
                           "💰 Saldo restante en banco: ||*$" + formatearCOP(sald || 0) + " COP*||\n\n" +
                           "⏳ *Impacto en Horas de Trabajo:*\n" +
                           "• Equivale a *" + horasTrabajo + " horas* de tu trabajo (~*" + diasCupo + " días* de cupo diario).";
@@ -5019,10 +5866,15 @@ function procesarAccionesGemini(respuesta) {
     textoFinal = respuesta.replace(accionRegex, "").trim() + avisoAccion;
 
     if (ultimoGastoTimestamp) {
+      var urlMapa = getUrlWebAppConParametros("view=mapa");
       var kbPostGasto = [
         [
           { text: "↩️ Deshacer Gasto", callback_data: "cb:deshacer:" + ultimoGastoTimestamp },
-          { text: "💳 Ver Saldo", callback_data: "cb:saldo" }
+          { text: "🗺️ Ver en Mapa", web_app: { url: urlMapa } }
+        ],
+        [
+          { text: "💳 Ver Saldo", callback_data: "cb:saldo" },
+          { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
         ]
       ];
 
@@ -5301,11 +6153,17 @@ function enviarMensajeTelegramDirecto(chatId, textoHtml, token, inlineKeyboard) 
 
   if (statusCode !== 200) {
     Logger.log("Fallo envío HTML Telegram (" + statusCode + "): " + res.getContentText() + ". Reintentando en texto plano limpio...");
-    // Fallback: remover etiquetas HTML y enviar en texto plano
+    // Fallback 1: remover etiquetas HTML y enviar en texto plano
     payload.text = textoHtml.replace(/<[^>]+>/g, "");
     delete payload.parse_mode;
     options.payload = JSON.stringify(payload);
-    UrlFetchApp.fetch(url, options);
+    var resRetry = UrlFetchApp.fetch(url, options);
+    // Fallback 2: si aún falla (por ejemplo por botones o URLs de webapp inválidas), reintentar sin botones
+    if (resRetry.getResponseCode() !== 200 && payload.reply_markup) {
+      delete payload.reply_markup;
+      options.payload = JSON.stringify(payload);
+      UrlFetchApp.fetch(url, options);
+    }
   }
 }
 
@@ -5751,6 +6609,9 @@ function migrarHojaTransaccionesATipo(ss) {
       }
     }
   }
+
+  // Asegurar columnas de Latitud, Longitud y Ubicación
+  asegurarColumnasUbicacion(sheet);
 }
 
 // ==========================================
@@ -5765,12 +6626,13 @@ function inicializarHojas() {
     shTransacciones = ss.insertSheet(CONFIG.HOJA_TRANSACCIONES);
   }
   if (shTransacciones.getLastRow() === 0) {
-    shTransacciones.appendRow(["Fecha", "Tipo", "Comercio", "Importe", "Tarjeta", "Categoría", "Origen", "ID_Timestamp"]);
-    shTransacciones.getRange("A1:H1").setFontWeight("bold").setBackground("#1A73E8").setFontColor("#FFFFFF");
+    shTransacciones.appendRow(["Fecha", "Tipo", "Comercio", "Importe", "Tarjeta", "Categoría", "Origen", "ID_Timestamp", "Latitud", "Longitud", "Ubicación"]);
+    shTransacciones.getRange("A1:K1").setFontWeight("bold").setBackground("#1A73E8").setFontColor("#FFFFFF");
     shTransacciones.setFrozenRows(1);
     shTransacciones.getRange("D2:D").setNumberFormat("$#,##0");
   } else {
     migrarHojaTransaccionesATipo(ss);
+    asegurarColumnasUbicacion(shTransacciones);
   }
 
   // 2. Hoja Gastos Fijos
@@ -6096,7 +6958,8 @@ function obtenerTecladoPrincipalTelegram() {
   return {
     keyboard: [
       [
-        { text: "📱 Abrir Dashboard Web", web_app: { url: CONFIG.WEB_APP_URL } }
+        { text: "📱 Abrir Dashboard Web", web_app: { url: getUrlWebAppConParametros("view=webapp") } },
+        { text: "🗺️ Mapa de Calor", web_app: { url: getUrlWebAppConParametros("view=mapa") } }
       ],
       [{ text: "💳 Mi Saldo" }, { text: "🏦 Bolsillos" }],
       [{ text: "📊 Resumen Mes" }, { text: "🏢 Quincena" }],
@@ -6116,6 +6979,7 @@ function configurarComandosTelegram() {
     { command: "saldo", description: "💳 Ver saldo disponible y bolsillos en tiempo real" },
     { command: "bolsillos", description: "🏦 Estado en tiempo real y reglas Davivienda" },
     { command: "resumen", description: "📊 Resumen mensual de gastos vs presupuesto" },
+    { command: "mapa", description: "🗺️ Ver mapa de calor y epicentros de consumo GPS" },
     { command: "quincena", description: "🏢 Calendario de nómina quincenal y compromisos" },
     { command: "traslado", description: "🔄 Trasladar disponible a bolsillo ahorro u obligaciones" },
     { command: "retirar_bolsillo", description: "🔄 Retirar dinero de bolsillo a disponible" },
@@ -6318,9 +7182,10 @@ function generarReporteCierreMes(conf) {
 
 // ==========================================
 // REGISTRO DE WEBHOOK TELEGRAM
-// ==========================================
 function registrarWebhookTelegram() {
-  var webAppUrl = CONFIG.WEB_APP_URL ? CONFIG.WEB_APP_URL.split("?")[0] : "https://script.google.com/macros/s/TU_DEPLOYMENT_ID/exec";
+  var webAppUrl = (CONFIG.WEB_APP_URL && CONFIG.WEB_APP_URL.indexOf("TU_DEPLOYMENT_ID") === -1)
+    ? CONFIG.WEB_APP_URL.split("?")[0] 
+    : "https://script.google.com/macros/s/AKfycbxjz1Y8xXd5vv6D3PuNxw16LI3UQByPnb_m3pCoDw9FTacTz7QVTmHmtUXQCaWT8qQ1LA/exec";
   var token = CONFIG.TELEGRAM_TOKEN;
   var url = "https://api.telegram.org/bot" + token + "/setWebhook?url=" + encodeURIComponent(webAppUrl);
   var res = UrlFetchApp.fetch(url);

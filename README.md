@@ -135,7 +135,7 @@ El sistema implementa una arquitectura financiera basada en la regla de **1 déb
 El archivo de Google Sheets se estructura en 5 pestañas:
 
 1. **`Transacciones`**:
-   - Columnas: `Fecha` | `Tipo` (🔴 Gasto / 🟢 Ingreso / 🔄 Traslado) | `Comercio` | `Monto` | `Medio` | `Categoría` | `ID_Transaccion` | `Notas`
+   - Columnas: `Fecha` | `Tipo` (🔴 Gasto / 🟢 Ingreso / 🔄 Traslado) | `Comercio` | `Importe` | `Tarjeta` | `Categoría` | `Origen` | `ID_Timestamp` | `Latitud` | `Longitud` | `Ubicación / Dirección`
 2. **`Gastos_Fijos`**:
    - Columnas: `Concepto` | `Monto` | `DiaPago` | `Medio` | `Tipo` (Mensual / Anual)
 3. **`Configuracion`**:
@@ -211,22 +211,25 @@ En el editor de Apps Script, ve a **Configuración del proyecto** (ícono de eng
 6. En los registros verás: `Resultado de registro de Webhook Telegram: {"ok":true,"result":true,"description":"Webhook was set"}`.
 7. Opcional: ejecuta `configurarTriggersAutomaticos()` para activar las alertas matutinas automáticas a las 8:00 AM.
 
-### 6. Integración con Apple Pay (iOS Shortcuts)
-Para registrar gastos con Apple Pay de forma automática en tu iPhone:
+### 6. Integración con Apple Pay y Geolocalización GPS (iOS Shortcuts)
+Para registrar gastos con Apple Pay de forma automática en tu iPhone y proyectarlos en el **Mapa de Calor**:
 1. Abre la app **Atajos** (*Shortcuts*) en iOS -> pestaña **Automatización**.
-2. Crear nueva automatización: **Al pagar con Apple Pay** -> Selecciona cualquier tarjeta.
-3. Agrega la acción **Obtener contenido de URL** (*URL Fetch*):
-   - **URL:** La URL de tu aplicación web de Apps Script.
+2. Crear nueva automatización: **Al pagar con Apple Pay** (o Al usar sin contacto) -> Selecciona cualquier tarjeta.
+3. Agrega la acción **Obtener ubicación actual** (*Get Current Location*).
+4. Agrega la acción **Diccionario** (*Dictionary*) con las siguientes claves:
+   - `comercio` : Variable `Comercio` (Propiedad: Nombre)
+   - `importe` : Variable `Cantidad`
+   - `tarjeta` : Variable `Tarjeta o pase` (Propiedad: Nombre)
+   - `categoria` : Texto `General` (o la que prefieras)
+   - `lat` : Variable `Ubicación actual` (Propiedad: Latitud)
+   - `lng` : Variable `Ubicación actual` (Propiedad: Longitud)
+   - `ubicacion` : Variable `Ubicación actual` (Propiedad: Nombre o Ciudad)
+5. Agrega la acción **Obtener contenido de URL** (*URL Fetch*):
+   - **URL:** La URL de tu aplicación web de Apps Script (`WEB_APP_URL` sin parámetros).
    - **Método:** `POST`
-   - **Cuerpo de la solicitud:** `JSON` con los siguientes campos del evento Apple Pay:
-     ```json
-     {
-       "comercio": "Nombre de la tienda / comercio",
-       "monto": 25000,
-       "medio": "Tarjeta Davivienda / Nu"
-     }
-     ```
-4. Desactiva *"Preguntar antes de ejecutar"* y activa *"Notificar al ejecutarse"*.
+   - **Encabezados:** `Content-Type` = `application/json`
+   - **Cuerpo de la solicitud:** Pasa el `Diccionario` creado en el paso anterior.
+6. Desactiva *"Preguntar antes de ejecutar"* y activa *"Notificar al ejecutarse"*.
 
 ---
 
@@ -235,6 +238,7 @@ Para registrar gastos con Apple Pay de forma automática en tu iPhone:
 | Comando | Descripción |
 | :--- | :--- |
 | `/start` o `/menu` | Despliega el menú principal interactivo y activa el teclado de accesos rápidos. |
+| `/mapa` | **Mapa de Calor de Gastos (GPS):** Visualiza los epicentros de consumo en un mapa interactivo Leaflet en modo oscuro. |
 | `/saldo` | Liquidez en vivo: Disponible, Bolsillo Ahorro, Bolsillo Obligaciones y Saldo Total consolidado. |
 | `/bolsillos` | Estado detallado de bolsillos, porcentajes en tiempo real y reglas de débito de nómina. |
 | `/quincena` o `/nomina` | Calendario quincenal, días faltantes para el cobro, compromisos de la quincena y cupo diario seguro. |
