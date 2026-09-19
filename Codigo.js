@@ -2159,8 +2159,9 @@ function handleTelegramMessage(msg) {
 // ==========================================
 function handleTelegramPhoto(msg) {
   var chatId = msg.chat.id.toString();
+  var caption = (msg.caption || "").trim();
   enviarAccionChat(chatId, "upload_photo");
-  sendTelegram(chatId, "📸 *Analizando comprobante de pago con Gemini Multimodal...*");
+  sendTelegram(chatId, caption ? "📸 *Analizando imagen y tu consulta con Gemini...*" : "📸 *Analizando imagen con Gemini Multimodal...*");
   enviarAccionChat(chatId, "typing");
 
   try {
@@ -2185,21 +2186,26 @@ function handleTelegramPhoto(msg) {
     var conf = obtenerConfiguracionActual();
     var resumenMes = obtenerResumenMesActual();
 
-    var promptVision = "Analiza minuciosamente esta imagen (comprobante bancario, recibo de pago, comprobante de ingreso o captura de app financiera como Nequi, Davivienda, Nu, Bancolombia, DaviPlata, PSE, etc.).\n\n" +
-      "DETERMINA EL TIPO EXACTO DE OPERACIÓN:\n\n" +
-      "1. 🔴 GASTO / COMPRA / SALIDA DE DINERO (pago a un comercio, restaurante, factura, compra o transferencia enviada a otra persona):\n" +
+    var promptVision = "Analiza minuciosamente esta imagen.\n\n" +
+      (caption ? "TEXTO O PREGUNTA QUE EL USUARIO ENVIÓ JUNTO CON LA IMAGEN: \"" + caption + "\"\n\n" : "") +
+      "DETERMINA EL TIPO EXACTO DE CONTENIDO:\n\n" +
+      "1. 🛍️ SIMULADOR DE COMPRA / ¿ME LO COMPRO O NO? (Foto de un producto, prenda, tenis, tecnología, etiqueta de precio en tienda, vitrina, menú o carrito de compras donde el usuario pregunta si comprarlo o si vale la pena):\n" +
+      "   - Extrae el precio exacto en COP (o convierte si está en USD a ~4.200 COP) y el nombre del artículo.\n" +
+      "   - Evalúa si el usuario debería comprarlo considerando su disponible, sus horas de trabajo en Aviatur ($19.957 COP/hora) y su cupo diario.\n" +
+      "   - Emite OBLIGATORIAMENTE al final: [ACCION: SIMULAR_COMPRA <monto_numerico> | <nombre_producto> | <categoria_sugerida>]\n\n" +
+      "2. 🔴 GASTO YA PAGADO / COMPROBANTE DE PAGO (recibo, factura ya cancelada, voucher, transferencia enviada, captura de app financiera como Nequi, Davivienda, Nu, etc.):\n" +
       "   - Extrae importe exacto en COP, comercio/destinatario, categoría sugerida y medio/banco.\n" +
       "   - Agrega al final: [ACCION: REGISTRAR_GASTO <monto_numerico> | <comercio> | <categoria> | <banco_o_medio>]\n\n" +
-      "2. 🟢 INGRESO / ENTRADA DE DINERO (dinero recibido a favor del usuario, consignación recibida, pago de nómina, transferencia recibida de un tercero):\n" +
+      "3. 🟢 INGRESO RECIBIDO (consignación a favor, nómina acreditada, transferencia recibida):\n" +
       "   - Si es nómina quincenal: [ACCION: COBRAR_QUINCENA]\n" +
       "   - Si es otro ingreso externo: [ACCION: AGREGAR_INGRESO <monto_numerico> | <concepto>]\n\n" +
-      "3. 🔄 TRASLADO INTERNO ENTRE BOLSILLOS (dinero movido entre la cuenta disponible y un bolsillo de ahorro u obligaciones dentro de Davivienda):\n" +
-      "   - Si el dinero se metió/trasladó al bolsillo: [ACCION: TRASLADAR_A_BOLSILLO <ahorro|obligaciones> | <monto_numerico>]\n" +
-      "   - Si el dinero se sacó del bolsillo a la cuenta: [ACCION: TRASLADAR_DE_BOLSILLO <ahorro|obligaciones> | <monto_numerico>]\n\n" +
-      "4. 🟣 TARJETA NU:\n" +
-      "   - Si muestra extracto o deuda pendiente a pagar: [ACCION: SET_DEUDA_TARJETA <monto_numerico>]\n" +
-      "   - Si es comprobante de pago de la tarjeta Nu: [ACCION: PAGAR_TARJETA <monto_numerico>]\n\n" +
-      "ESTILO OBLIGATORIO: Sé ultra conciso (máximo 2 a 3 líneas). Resume la transacción con viñetas limpias y emojis. Si no contiene datos financieros legibles, indícalo en una sola frase breve.";
+      "4. 🔄 TRASLADO INTERNO ENTRE BOLSILLOS DAVIVIENDA:\n" +
+      "   - [ACCION: TRASLADAR_A_BOLSILLO <ahorro|obligaciones> | <monto_numerico>]\n" +
+      "   - [ACCION: TRASLADAR_DE_BOLSILLO <ahorro|obligaciones> | <monto_numerico>]\n\n" +
+      "5. 🟣 TARJETA NU:\n" +
+      "   - [ACCION: SET_DEUDA_TARJETA <monto_numerico>]\n" +
+      "   - [ACCION: PAGAR_TARJETA <monto_numerico>]\n\n" +
+      "ESTILO OBLIGATORIO: Sé ultra conciso (máximo 2 a 3 líneas), directo, con viñetas limpias y emojis.";
 
     var historial = obtenerHistorialChat(chatId);
     var systemInstruction = construirSystemInstructionFinanciero(resumenMes, conf);
@@ -2260,6 +2266,9 @@ function handleTelegramVoice(msg) {
       "5. 🏦 CALIBRACIÓN SALDO BANCO:\n" +
       "   - Si menciona su saldo total en Davivienda: [ACCION: SET_SALDO_TOTAL <monto_numerico>]\n" +
       "   - Si menciona su saldo disponible libre: [ACCION: SET_SALDO_DISPONIBLE <monto_numerico>]\n\n" +
+      "6. 🛍️ CONSULTA O SIMULACIÓN DE COMPRA (El usuario pregunta si puede o debería comprar algo, o pide opinión/permiso sobre un antojo/artículo):\n" +
+      "   - Evalúa si vale la pena contra sus horas de trabajo en Aviatur ($19.957 COP/hora) y su cupo libre.\n" +
+      "   - Emite OBLIGATORIAMENTE al final: [ACCION: SIMULAR_COMPRA <monto_numerico> | <nombre_producto> | <categoria_sugerida>]\n\n" +
       "ESTILO OBLIGATORIO: Sé ultra conciso (máximo 2 a 3 líneas), directo y al grano. Cero rodeos.";
 
     var historial = obtenerHistorialChat(chatId);
@@ -5528,6 +5537,124 @@ function handleTelegramCallbackQuery(cb) {
     ]);
     return;
   }
+
+  // Callbacks del Simulador de Compra 🛍️ ("¿Me lo compro o no?")
+  if (data.startsWith("cb:comprar:")) {
+    var partesCmp = data.split(":");
+    var montoCmp = parseFloat(partesCmp[1]) || 0;
+    var prodCmp = partesCmp.slice(2).join(":") || "Compra";
+    if (montoCmp > 0) {
+      var ssCmp = SpreadsheetApp.getActiveSpreadsheet();
+      var sheetCmp = ssCmp.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+      if (sheetCmp) {
+        asegurarColumnasUbicacion(sheetCmp);
+      }
+      var fechaActualCmp = new Date();
+      var fechaTextoCmp = Utilities.formatDate(fechaActualCmp, CONFIG.ZONA_HORARIA, "yyyy-MM-dd HH:mm:ss");
+      var idTimestampCmp = new Date().getTime();
+
+      sheetCmp.appendRow([
+        fechaTextoCmp,
+        "🔴 Gasto",
+        prodCmp,
+        montoCmp,
+        "Tarjeta / Davivienda",
+        "Ocio / Deseo",
+        "Modo ¿Me lo compro?",
+        idTimestampCmp,
+        "",
+        "",
+        ""
+      ]);
+
+      var cacheCmp = CacheService.getScriptCache();
+      cacheCmp.put("ultimo_gasto_id", idTimestampCmp.toString(), 600);
+
+      var nuevoSaldoCmp = descontarSaldoCuenta(montoCmp);
+      var horasTrabajoCmp = (montoCmp / 19957).toFixed(1);
+
+      var msgConfCmp = "🛍️ *¡COMPRA ANOTADA EN TUS FINANZAS!*\n\n" +
+                       "💵 Monto: *$" + formatearCOP(montoCmp) + " COP*\n" +
+                       "🏷️ Artículo: *" + prodCmp + "*\n" +
+                       "⏳ Costo laboral: *" + horasTrabajoCmp + " horas* de tu trabajo\n" +
+                       "💰 Saldo restante en cuenta: ||*$" + formatearCOP(nuevoSaldoCmp || 0) + " COP*||\n\n" +
+                       "✅ Registrado en Google Sheets y debitado de tu saldo disponible.";
+
+      var urlMapaCmp = getUrlWebAppConParametros("view=mapa");
+      var kbConfCmp = [
+        [
+          { text: "↩️ Deshacer", callback_data: "cb:deshacer:" + idTimestampCmp },
+          { text: "🗺️ Ver Mapa", web_app: { url: urlMapaCmp } }
+        ],
+        [
+          { text: "💳 Ver Saldo", callback_data: "cb:saldo" },
+          { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
+        ]
+      ];
+      responder(msgConfCmp, kbConfCmp);
+      solicitarUbicacionPostGasto(chatId);
+    }
+    return;
+  }
+
+  if (data.startsWith("cb:evitar_gasto:")) {
+    var partesEv = data.split(":");
+    var montoEv = parseFloat(partesEv[1]) || 0;
+    var prodEv = partesEv.slice(2).join(":") || "Antojo";
+    var horasEv = (montoEv / 19957).toFixed(1);
+
+    var msgEv = "🛡️ *¡VICTORIA FINANCIERA! COMPRA EVITADA*\n\n" +
+                "👏 *¡Excelente fuerza de voluntad, Dilan!*\n\n" +
+                "Salvaste:\n" +
+                "💵 *$" + formatearCOP(montoEv) + " COP* que se quedan en tu cuenta.\n" +
+                "⏳ *" + horasEv + " horas de tu vida y trabajo* en Aviatur protegidas.\n\n" +
+                "💎 _Evitar gastos impulsivos es el hábito #1 que acelera tu libertad financiera y hace crecer tu Bolsillo de Ahorro._";
+
+    var kbEv = [
+      [
+        { text: "💳 Ver Saldo", callback_data: "cb:saldo" },
+        { text: "🏦 Ver Bolsillos", callback_data: "cb:bolsillos" }
+      ],
+      [
+        { text: "🎯 Ver Metas", callback_data: "cb:metas" },
+        { text: "🐜 Radar Hormiga", callback_data: "cb:radar" }
+      ]
+    ];
+    responder(msgEv, kbEv);
+    return;
+  }
+
+  if (data.startsWith("cb:sim_cuotas:")) {
+    var partesSC = data.split(":");
+    var montoSC = parseFloat(partesSC[1]) || 0;
+    if (montoSC > 0) {
+      var c1 = montoSC;
+      var c3 = Math.round((montoSC * 1.045) / 3);
+      var c6 = Math.round((montoSC * 1.09) / 6);
+      var c12 = Math.round((montoSC * 1.18) / 12);
+      var intTotal12 = Math.round((c12 * 12) - montoSC);
+
+      var msgSC = "⚖️ *SIMULACIÓN DE CUOTAS (TARJETA NU)*\n\n" +
+                  "Valor del artículo: *$" + formatearCOP(montoSC) + " COP*\n\n" +
+                  "• *1 cuota (Recomendada Nu):* *$" + formatearCOP(c1) + " COP* (0% interés 🟢)\n" +
+                  "• *3 cuotas:* 3 pagos de *$" + formatearCOP(c3) + " COP* (~$" + formatearCOP((c3*3)-montoSC) + " interés)\n" +
+                  "• *6 cuotas:* 6 pagos de *$" + formatearCOP(c6) + " COP* (~$" + formatearCOP((c6*6)-montoSC) + " interés)\n" +
+                  "• *12 cuotas:* 12 pagos de *$" + formatearCOP(c12) + " COP* (+$" + formatearCOP(intTotal12) + " COP de interés 🔴)\n\n" +
+                  "💡 *Regla de Oro:* En Nu compra a **1 cuota**. Diferir te ata meses a deudas y regala dinero al banco en intereses.";
+
+      var kbSC = [
+        [
+          { text: "🛒 Ya lo compré a 1 cuota", callback_data: "cb:comprar:" + montoSC + ":Compra a 1 cuota" },
+          { text: "🛡️ Decidí No Comprarlo", callback_data: "cb:evitar_gasto:" + montoSC + ":Compra desistida" }
+        ],
+        [
+          { text: "💳 Ver Mi Saldo", callback_data: "cb:saldo" }
+        ]
+      ];
+      responder(msgSC, kbSC);
+    }
+    return;
+  }
 }
 
 // ==========================================
@@ -5599,7 +5726,8 @@ function construirSystemInstructionFinanciero(resumen, conf) {
     "DEBES traducir el costo monetario a esfuerzo laboral y tiempo de vida real:\n" +
     "1. ⏳ Horas de Trabajo: Divide el monto entre $19.957 COP. Ejemplo: '$200.000 COP equivalen a 10,0 horas de tu trabajo  (más de una jornada laboral completa de 8 horas)'.\n" +
     "2. 📅 Días de Cupo Diario Consumidos: Divide el monto entre su cupo diario de ocio (" + formatearCOP(radar.nuevoCupoDiarioSeguro) + " COP/día). Ejemplo: 'Consume X días completos de tu presupuesto diario de ocio'.\n" +
-    "3. 🎯 Veredicto Contundente: Dile con total claridad y honestidad si vale la pena trabajar tantas horas  a cambio de ese producto o si es mejor proteger su disponible para llegar tranquilo a la nómina.\n\n" +
+    "3. 🎯 Veredicto Contundente: Dile con total claridad y honestidad si vale la pena trabajar tantas horas a cambio de ese producto o si es mejor proteger su disponible para llegar tranquilo a la nómina.\n" +
+    "4. ⚡ ETIQUETA OBLIGATORIA: Al final de tu análisis de compra o antojo, DEBES incluir siempre la etiqueta: [ACCION: SIMULAR_COMPRA <monto_numerico> | <nombre_producto> | <categoria_sugerida>]. Esto activará automáticamente los botones interactivos de decisión para el usuario.\n\n" +
     "=== MÓDULO SIMULADOR DE DECISIONES DE GASTO Y GESTIÓN DE RIESGO ===\n" +
     "Cuando el usuario te pregunte si puede gastar en algo no contemplado:\n" +
     "1. Evalúa el impacto contra el Disponible de Ocio (Cupo de ~$" + formatearCOP(radar.nuevoCupoDiarioSeguro) + " COP/día) y el saldo libre.\n" +
@@ -5687,6 +5815,7 @@ function procesarAccionesGemini(respuesta) {
 
     var ultimoGastoTimestamp = null;
     var botonesAlertaCritica = null;
+    var simulacionCompraData = null;
 
     try {
       if (comando === "COBRAR_QUINCENA") {
@@ -5927,6 +6056,53 @@ function procesarAccionesGemini(respuesta) {
             checkBudgetAlert(montG, comG);
           }
         }
+      } else if (comando === "SIMULAR_COMPRA") {
+        var partesSim = params.split("|");
+        var montSim = sanitizarImporteCOP(partesSim[0]);
+        var prodSim = partesSim[1] ? partesSim[1].trim() : "Artículo";
+        var catSim = partesSim[2] ? partesSim[2].trim() : "Ocio / Deseo";
+
+        if (montSim > 0) {
+          var confSim = obtenerConfiguracionActual();
+          var radarSim = analizarGastosHormigaYDesviacion(confSim);
+          var horasTrabajoSim = (montSim / 19957).toFixed(1);
+          var cupoDia = radarSim.nuevoCupoDiarioSeguro > 0 ? radarSim.nuevoCupoDiarioSeguro : 21190;
+          var diasCupoSim = (montSim / cupoDia).toFixed(1);
+          var saldDisp = confSim.saldoCuenta;
+
+          var veredicto = "";
+          var badgeVeredicto = "";
+          if (montSim > saldDisp) {
+            badgeVeredicto = "🔴 NO LO COMPRES (FONDOS INSUFICIENTES)";
+            veredicto = "• No te alcanza con tu disponible libre ($" + formatearCOP(saldDisp) + " COP). Comprarlo implicaría endeudarte o tocar tus bolsillos blindados.";
+          } else if (montSim > (saldDisp * 0.45) || (saldDisp - montSim) < 40000) {
+            badgeVeredicto = "🔴 ALTO RIESGO / NO RECOMENDADO";
+            veredicto = "• Consume más del 40% de tu disponible actual. Te dejaría en zona crítica (<$40k) para terminar la quincena.";
+          } else if (montSim > (saldDisp * 0.20)) {
+            badgeVeredicto = "🟡 PÉNSALO 48 HORAS (REGLA ANTI-IMPULSO)";
+            veredicto = "• Cabe en tu cuenta, pero te cuesta *" + diasCupoSim + " días* de tu cupo de ocio. Aplica la regla de las 48 horas: si en dos días aún lo necesitas, cómpralo.";
+          } else {
+            badgeVeredicto = "🟢 COMPRA SEGURA / LUZ VERDE";
+            veredicto = "• Tu disponible lo absorbe con holgura. Tus gastos fijos y el bolsillo de ahorro del 53% se mantienen 100% blindados.";
+          }
+
+          avisoAccion = "\n\n━━━━━━━━━━━━━━━━━━━━\n" +
+                        "🛍️ *SIMULADOR DE COMPRA INTELIGENTE*\n" +
+                        "🏷️ Artículo: *" + prodSim + "*\n" +
+                        "💵 Precio: *$" + formatearCOP(montSim) + " COP*\n" +
+                        "⏳ Costo laboral: *" + horasTrabajoSim + " horas* de tu trabajo en Aviatur\n" +
+                        "📅 Impacto quincenal: Equivale a *" + diasCupoSim + " días* de ocio libre\n" +
+                        "💰 Saldo disponible hoy: ||*$" + formatearCOP(saldDisp) + " COP*||\n\n" +
+                        "🎯 *Veredicto:* *" + badgeVeredicto + "*\n" +
+                        veredicto + "\n" +
+                        "━━━━━━━━━━━━━━━━━━━━";
+
+          simulacionCompraData = {
+            monto: montSim,
+            producto: prodSim,
+            categoria: catSim
+          };
+        }
       }
     } catch (err) {
       Logger.log("Error ejecutando acción de Gemini: " + err.toString());
@@ -5960,6 +6136,23 @@ function procesarAccionesGemini(respuesta) {
       return {
         texto: textoFinal,
         inlineKeyboard: kbPostGasto
+      };
+    }
+
+    if (simulacionCompraData) {
+      var kbSim = [
+        [
+          { text: "🛒 Ya lo compré ($" + formatearCOP(simulacionCompraData.monto) + ")", callback_data: "cb:comprar:" + simulacionCompraData.monto + ":" + simulacionCompraData.producto.substring(0, 25) },
+          { text: "🛡️ Decidí No Comprarlo", callback_data: "cb:evitar_gasto:" + simulacionCompraData.monto + ":" + simulacionCompraData.producto.substring(0, 25) }
+        ],
+        [
+          { text: "⚖️ Ver en Cuotas Nu", callback_data: "cb:sim_cuotas:" + simulacionCompraData.monto },
+          { text: "💳 Ver Mi Saldo", callback_data: "cb:saldo" }
+        ]
+      ];
+      return {
+        texto: textoFinal,
+        inlineKeyboard: kbSim
       };
     }
   }
