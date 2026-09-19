@@ -1440,6 +1440,7 @@ function handleTelegramMessage(msg) {
   else if (textLower === "🏆 cierre de mes" || textLower === "cierre de mes" || textLower === "cierre") text = "/cierre_mes";
   else if (textLower === "☀️ briefing" || textLower === "briefing") text = "/briefing";
   else if (textLower === "🟣 tarjeta nu" || textLower === "tarjeta nu" || textLower === "tarjeta" || textLower === "nu") text = "/deuda";
+  else if (textLower === "📄 extracto pdf" || textLower === "extracto pdf" || textLower === "extracto" || textLower === "/extracto" || textLower === "/pdf") text = "/extracto";
   else if (textLower === "🗺️ mapa de calor" || textLower === "mapa de calor" || textLower === "mapa" || textLower === "/mapa" || textLower === "/calor") text = "/mapa";
   else if (textLower === "⏭️ omitir" || textLower === "omitir") {
     // El usuario omitió compartir ubicación después de un gasto
@@ -2128,6 +2129,12 @@ function handleTelegramMessage(msg) {
   if (text === "/metas") {
     var metasObj = generarMensajeMetas(conf);
     sendTelegram(chatId, metasObj.texto, metasObj.inlineKb);
+    return;
+  }
+
+  // 11b. Comando /extracto o /pdf (Generador Oficial en PDF)
+  if (text === "/extracto" || text === "/pdf") {
+    enviarExtractoPdfTelegram(chatId);
     return;
   }
 
@@ -7225,9 +7232,10 @@ function obtenerTecladoPrincipalTelegram() {
       ],
       [{ text: "💳 Mi Saldo" }, { text: "🏦 Bolsillos" }],
       [{ text: "📊 Resumen Mes" }, { text: "🏢 Quincena" }],
+      [{ text: "📄 Extracto PDF" }, { text: "🏆 Cierre de Mes" }],
       [{ text: "⚖️ Calculadora Cuotas" }, { text: "🐜 Radar Hormiga" }],
-      [{ text: "📈 Inversiones" }, { text: "🏆 Cierre de Mes" }],
-      [{ text: "☀️ Briefing" }, { text: "🟣 Tarjeta Nu" }]
+      [{ text: "📈 Inversiones" }, { text: "🟣 Tarjeta Nu" }],
+      [{ text: "☀️ Briefing" }]
     ],
     resize_keyboard: true,
     persistent: true
@@ -7241,6 +7249,7 @@ function configurarComandosTelegram() {
     { command: "saldo", description: "💳 Ver saldo disponible y bolsillos en tiempo real" },
     { command: "bolsillos", description: "🏦 Estado en tiempo real y reglas Davivienda" },
     { command: "resumen", description: "📊 Resumen mensual de gastos vs presupuesto" },
+    { command: "extracto", description: "📄 Descargar extracto y estado de cuenta mensual en PDF" },
     { command: "mapa", description: "🗺️ Ver mapa de calor y epicentros de consumo GPS" },
     { command: "quincena", description: "🏢 Calendario de nómina quincenal y compromisos" },
     { command: "traslado", description: "🔄 Trasladar disponible a bolsillo ahorro u obligaciones" },
@@ -7453,6 +7462,229 @@ function registrarWebhookTelegram() {
   var res = UrlFetchApp.fetch(url);
   Logger.log("Resultado de registro de Webhook Telegram: " + res.getContentText());
   configurarComandosTelegram();
+}
+
+// ==========================================
+// GENERADOR Y ENVÍO DE EXTRACTO FINANCIERO EN PDF 📄
+// ==========================================
+function enviarExtractoPdfTelegram(chatId) {
+  chatId = chatId || CONFIG.TELEGRAM_CHAT_ID;
+  enviarAccionChat(chatId, "upload_document");
+  sendTelegram(chatId, "📄 *Compilando tu Extracto Financiero Oficial en PDF...*\n_Extrayendo balance y transacciones del mes..._");
+
+  try {
+    var conf = obtenerConfiguracionActual();
+    var resumen = obtenerResumenMesActual();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheetT = ss.getSheetByName(CONFIG.HOJA_TRANSACCIONES);
+
+    var hoy = new Date();
+    var mesActual = Utilities.formatDate(hoy, CONFIG.ZONA_HORARIA, "yyyy-MM");
+    var nombreMes = Utilities.formatDate(hoy, CONFIG.ZONA_HORARIA, "MMMM yyyy").toUpperCase();
+
+    var transaccionesMes = [];
+    if (sheetT && sheetT.getLastRow() > 1) {
+      var filas = sheetT.getDataRange().getValues();
+      for (var i = 1; i < filas.length; i++) {
+        var fechaVal = (filas[i][0] || "").toString();
+        var esDeMes = fechaVal.indexOf(mesActual) !== -1 || (filas[i][0] instanceof Date && Utilities.formatDate(filas[i][0], CONFIG.ZONA_HORARIA, "yyyy-MM") === mesActual);
+        if (esDeMes) {
+          var fTxt = "";
+          if (filas[i][0] instanceof Date) {
+            fTxt = Utilities.formatDate(filas[i][0], CONFIG.ZONA_HORARIA, "dd/MM/yyyy HH:mm");
+          } else {
+            fTxt = fechaVal.substring(0, 16);
+          }
+          transaccionesMes.push({
+            fecha: fTxt,
+            tipo: (filas[i][1] || "Gasto").toString(),
+            comercio: (filas[i][2] || "Transacción").toString(),
+            monto: parseFloat(filas[i][3]) || 0,
+            medio: (filas[i][4] || "Davivienda").toString(),
+            categoria: (filas[i][5] || "General").toString(),
+            ubicacion: (filas[i][10] || "").toString()
+          });
+        }
+      }
+    }
+
+    var horasTrabajoMes = ((resumen.totalGastos || 1) / 19957).toFixed(1);
+    var htmlContent = generarHtmlExtractoPdf(conf, resumen, transaccionesMes, nombreMes, horasTrabajoMes);
+
+    var blobPdf = HtmlService.createHtmlOutput(htmlContent)
+      .getAs("application/pdf")
+      .setName("Extracto_Financiero_Dilan_Garrido_" + mesActual + ".pdf");
+
+    var token = CONFIG.TELEGRAM_TOKEN;
+    var urlTgDoc = "https://api.telegram.org/bot" + token + "/sendDocument";
+
+    var captionText = "📑 <b>EXTRACTO FINANCIERO OFICIAL</b>\n" +
+                      "👤 <b>Titular:</b> Dilan Garrido\n" +
+                      "🏢 <b>Empresa:</b> " + (CONFIG.EMPRESA || "Aviatur S.A.S.") + "\n" +
+                      "📅 <b>Período:</b> " + nombreMes + "\n\n" +
+                      "💰 <b>Disponible:</b> $" + formatearCOP(conf.saldoCuenta) + " COP\n" +
+                      "💎 <b>Bolsillo Ahorro:</b> $" + formatearCOP(conf.saldoBolsilloAhorro) + " COP (" + conf.pctAhorroReal + "%)\n" +
+                      "🛡️ <b>Bolsillo Obligaciones:</b> $" + formatearCOP(conf.saldoBolsilloObligaciones) + " COP\n" +
+                      "🟣 <b>Deuda Tarjeta Nu:</b> $" + formatearCOP(conf.deudaTarjetaNu) + " COP\n\n" +
+                      "✨ <i>Documento oficial generado por tu Personal Finance CFO.</i>";
+
+    var payload = {
+      chat_id: chatId,
+      document: blobPdf,
+      caption: captionText,
+      parse_mode: "HTML"
+    };
+
+    var resDoc = UrlFetchApp.fetch(urlTgDoc, {
+      method: "POST",
+      payload: payload,
+      muteHttpExceptions: true
+    });
+
+    if (resDoc.getResponseCode() !== 200) {
+      Logger.log("Aviso Telegram sendDocument: " + resDoc.getContentText());
+      // Reintento sin formato HTML en el caption
+      payload.caption = "Extracto Financiero Dilan Garrido - " + nombreMes;
+      delete payload.parse_mode;
+      UrlFetchApp.fetch(urlTgDoc, {
+        method: "POST",
+        payload: payload,
+        muteHttpExceptions: true
+      });
+    }
+  } catch (err) {
+    Logger.log("Error generando extracto PDF: " + err.toString());
+    sendTelegram(chatId, "⚠️ Ocurrió un error al compilar el extracto PDF: " + err.toString());
+  }
+}
+
+function generarHtmlExtractoPdf(conf, resumen, transacciones, nombreMes, horasTrabajoMes) {
+  conf = conf || obtenerConfiguracionActual();
+  resumen = resumen || obtenerResumenMesActual();
+  var hoy = new Date();
+  var fechaEmision = Utilities.formatDate(hoy, CONFIG.ZONA_HORARIA, "dd/MM/yyyy HH:mm:ss");
+
+  var pctAhorro = conf.pctAhorroReal || "0.0";
+  var pctOblig = conf.pctObligacionesReal || "0.0";
+  var pctDisp = conf.pctDisponibleReal || "0.0";
+
+  var filasHtml = "";
+  if (transacciones && transacciones.length > 0) {
+    for (var i = 0; i < transacciones.length; i++) {
+      var t = transacciones[i];
+      var esGasto = t.tipo.toLowerCase().indexOf("gasto") !== -1 || t.tipo === "";
+      var tagClass = esGasto ? "tag-gasto" : "tag-ingreso";
+      var tagText = esGasto ? "GASTO" : "INGRESO";
+      var montoFmt = (esGasto ? "-" : "+") + "$" + formatearCOP(t.monto) + " COP";
+      var colorMonto = esGasto ? "#b91c1c" : "#15803d";
+
+      filasHtml += '<tr>' +
+        '<td>' + t.fecha + '</td>' +
+        '<td><span class="tag ' + tagClass + '">' + tagText + '</span></td>' +
+        '<td><b>' + t.comercio + '</b>' + (t.ubicacion ? '<br><span style="color:#64748b; font-size:8px;">📍 ' + t.ubicacion + '</span>' : '') + '</td>' +
+        '<td>' + t.categoria + '</td>' +
+        '<td>' + t.medio + '</td>' +
+        '<td style="text-align:right; font-weight:700; color:' + colorMonto + ';">' + montoFmt + '</td>' +
+        '</tr>';
+    }
+  } else {
+    filasHtml = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#64748b;">No hay transacciones registradas para este período.</td></tr>';
+  }
+
+  var html = '<!DOCTYPE html>\n' +
+    '<html>\n' +
+    '<head>\n' +
+    '  <meta charset="UTF-8">\n' +
+    '  <title>Extracto Financiero - ' + nombreMes + '</title>\n' +
+    '  <style>\n' +
+    '    @page { size: A4; margin: 12mm 14mm 12mm 14mm; }\n' +
+    '    * { box-sizing: border-box; }\n' +
+    '    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #1e293b; margin: 0; padding: 0; font-size: 10px; line-height: 1.35; }\n' +
+    '    .header-table { width: 100%; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 14px; }\n' +
+    '    .logo-title { font-size: 18px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; margin: 0; }\n' +
+    '    .logo-sub { font-size: 9px; color: #64748b; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; margin-top: 2px; }\n' +
+    '    .meta-td { text-align: right; font-size: 9px; color: #475569; vertical-align: top; }\n' +
+    '    .meta-td b { color: #0f172a; }\n' +
+    '    .grid-kpi { width: 100%; border-collapse: separate; border-spacing: 6px 0; margin-left: -6px; width: calc(100% + 12px); margin-bottom: 14px; }\n' +
+    '    .kpi-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; }\n' +
+    '    .kpi-card.highlight { background: #eff6ff; border-color: #bfdbfe; }\n' +
+    '    .kpi-title { font-size: 8px; color: #64748b; text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }\n' +
+    '    .kpi-val { font-size: 14px; font-weight: 800; color: #0f172a; }\n' +
+    '    .kpi-sub { font-size: 8px; font-weight: 600; margin-top: 2px; }\n' +
+    '    .section-header { font-size: 11px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; border-left: 3px solid #2563eb; padding-left: 6px; margin: 12px 0 6px 0; }\n' +
+    '    .table-balance { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 9px; }\n' +
+    '    .table-balance td { padding: 5px 8px; border: 1px solid #e2e8f0; }\n' +
+    '    .table-balance tr:nth-child(even) { background: #f8fafc; }\n' +
+    '    .table-tx { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 9px; }\n' +
+    '    .table-tx th { background: #0f172a; color: #ffffff; text-align: left; padding: 5px 6px; font-size: 8px; font-weight: 700; text-transform: uppercase; }\n' +
+    '    .table-tx td { padding: 5px 6px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }\n' +
+    '    .table-tx tr:nth-child(even) { background: #f8fafc; }\n' +
+    '    .table-tx tr { page-break-inside: avoid; }\n' +
+    '    .tag { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 7px; font-weight: 700; }\n' +
+    '    .tag-gasto { background: #fee2e2; color: #991b1b; }\n' +
+    '    .tag-ingreso { background: #dcfce7; color: #166534; }\n' +
+    '    .footer { border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 14px; font-size: 8px; color: #94a3b8; text-align: center; }\n' +
+    '  </style>\n' +
+    '</head>\n' +
+    '<body>\n' +
+    '  <table class="header-table">\n' +
+    '    <tr>\n' +
+    '      <td>\n' +
+    '        <div class="logo-title">PERSONAL FINANCE CFO</div>\n' +
+    '        <div class="logo-sub">Estado de Cuenta y Auditoría Patrimonial Mensual</div>\n' +
+    '      </td>\n' +
+    '      <td class="meta-td">\n' +
+    '        <b>Titular:</b> Dilan Garrido<br>\n' +
+    '        <b>Empresa:</b> ' + (CONFIG.EMPRESA || "Aviatur S.A.S.") + '<br>\n' +
+    '        <b>Período:</b> ' + nombreMes + '<br>\n' +
+    '        <b>Emisión:</b> ' + fechaEmision + '<br>\n' +
+    '        <b>Moneda:</b> COP ($)\n' +
+    '      </td>\n' +
+    '    </tr>\n' +
+    '  </table>\n\n' +
+    '  <table class="grid-kpi">\n' +
+    '    <tr>\n' +
+    '      <td width="25%"><div class="kpi-card"><div class="kpi-title">Ingresos Netos</div><div class="kpi-val">$' + formatearCOP(resumen.totalIngresos || conf.salario) + '</div><div class="kpi-sub" style="color:#10b981;">Nómina Quincenal</div></div></td>\n' +
+    '      <td width="25%"><div class="kpi-card"><div class="kpi-title">Total Gastos Mes</div><div class="kpi-val">$' + formatearCOP(resumen.totalGastos) + '</div><div class="kpi-sub" style="color:#ef4444;">~' + horasTrabajoMes + ' hrs de trabajo</div></div></td>\n' +
+    '      <td width="25%"><div class="kpi-card highlight"><div class="kpi-title">Bolsillo Ahorro Puro</div><div class="kpi-val">$' + formatearCOP(conf.saldoBolsilloAhorro) + '</div><div class="kpi-sub" style="color:#2563eb;">' + pctAhorro + '% del patrimonio</div></div></td>\n' +
+    '      <td width="25%"><div class="kpi-card"><div class="kpi-title">Disponible en Cuenta</div><div class="kpi-val">$' + formatearCOP(conf.saldoCuenta) + '</div><div class="kpi-sub" style="color:#64748b;">' + pctDisp + '% disponible libre</div></div></td>\n' +
+    '    </tr>\n' +
+    '  </table>\n\n' +
+    '  <div class="section-header">1. Distribución Patrimonial Davivienda</div>\n' +
+    '  <table class="table-balance">\n' +
+    '    <tr>\n' +
+    '      <td><b>💎 Bolsillo Ahorro Puro (Meta 53%):</b> $' + formatearCOP(conf.saldoBolsilloAhorro) + ' COP (' + pctAhorro + '%)</td>\n' +
+    '      <td><b>🛡️ Bolsillo Obligaciones (Meta 27%):</b> $' + formatearCOP(conf.saldoBolsilloObligaciones) + ' COP (' + pctOblig + '%)</td>\n' +
+    '      <td><b>🛒 Disponible en Cuenta (Meta 20%):</b> $' + formatearCOP(conf.saldoCuenta) + ' COP (' + pctDisp + '%)</td>\n' +
+    '    </tr>\n' +
+    '    <tr style="background:#f1f5f9; font-weight:700;">\n' +
+    '      <td colspan="2"><b>💰 Saldo Total Consolidado en Banco Davivienda:</b> $' + formatearCOP(conf.saldoTotalBanco) + ' COP</td>\n' +
+    '      <td><b>🟣 Tarjeta Nu (Deuda Actual):</b> $' + formatearCOP(conf.deudaTarjetaNu) + ' COP</td>\n' +
+    '    </tr>\n' +
+    '  </table>\n\n' +
+    '  <div class="section-header">2. Registro Detallado de Transacciones (' + transacciones.length + ' movimientos)</div>\n' +
+    '  <table class="table-tx">\n' +
+    '    <thead>\n' +
+    '      <tr>\n' +
+    '        <th width="18%">Fecha</th>\n' +
+    '        <th width="10%">Tipo</th>\n' +
+    '        <th width="32%">Comercio / Detalle</th>\n' +
+    '        <th width="15%">Categoría</th>\n' +
+    '        <th width="10%">Medio</th>\n' +
+    '        <th width="15%" style="text-align:right;">Importe</th>\n' +
+    '      </tr>\n' +
+    '    </thead>\n' +
+    '    <tbody>\n' +
+    filasHtml +
+    '    </tbody>\n' +
+    '  </table>\n\n' +
+    '  <div class="footer">\n' +
+    '    Personal Finance CFO System • Generado confidencialmente para Dilan Garrido • ' + (CONFIG.EMPRESA || "Aviatur S.A.S.") + '\n' +
+    '  </div>\n' +
+    '</body>\n' +
+    '</html>';
+
+  return html;
 }
 
 // ==========================================
