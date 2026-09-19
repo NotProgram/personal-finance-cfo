@@ -80,6 +80,90 @@ function autorizarPermisos() {
 }
 
 // ==========================================
+// TELEGRAM MINI APP: WEB APP WIDGET IPHONE 📱
+// ==========================================
+function servirWebAppWidget(conf) {
+  conf = conf || obtenerConfiguracionActual();
+  var html = generarHtmlWidget(conf);
+  return HtmlService.createHtmlOutput(html)
+    .setTitle("Widget Financiero - Dilan Garrido")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+}
+
+function generarHtmlWidget(conf) {
+  conf = conf || obtenerConfiguracionActual();
+  var radar = analizarGastosHormigaYDesviacion(conf);
+  var flujo = conf.flujoQuincenal || {};
+  var cupoHoy = radar.nuevoCupoDiarioSeguro > 0 ? radar.nuevoCupoDiarioSeguro : 21190;
+  var diasQ = flujo.diasParaProximaNomina || 0;
+
+  var html = '<!DOCTYPE html>\n' +
+    '<html lang="es">\n' +
+    '<head>\n' +
+    '  <meta charset="UTF-8">\n' +
+    '  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">\n' +
+    '  <title>Widget Financiero</title>\n' +
+    '  <style>\n' +
+    '    * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system, BlinkMacSystemFont, "SF Pro Display", Roboto, sans-serif; }\n' +
+    '    body { background:#0a0e17; color:#f3f4f6; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:12px; }\n' +
+    '    .widget-card { background:linear-gradient(145deg, #111827 0%, #1e293b 100%); border:1px solid rgba(255,255,255,0.08); border-radius:22px; padding:18px; width:100%; max-width:340px; box-shadow:0 12px 30px rgba(0,0,0,0.6); }\n' +
+    '    .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:10px; color:#9ca3af; text-transform:uppercase; font-weight:700; letter-spacing:0.5px; }\n' +
+    '    .hero-box { background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:14px; padding:12px; text-align:center; margin-bottom:12px; }\n' +
+    '    .hero-label { font-size:10px; color:#10b981; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }\n' +
+    '    .hero-val { font-size:26px; font-weight:900; color:#ffffff; margin:4px 0 2px 0; letter-spacing:-0.5px; }\n' +
+    '    .hero-sub { font-size:10px; color:#6ee7b7; }\n' +
+    '    .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }\n' +
+    '    .grid-item { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05); border-radius:10px; padding:8px 10px; }\n' +
+    '    .item-label { font-size:9px; color:#9ca3af; text-transform:uppercase; font-weight:600; }\n' +
+    '    .item-val { font-size:13px; font-weight:800; color:#f3f4f6; margin-top:2px; }\n' +
+    '    .actions { display:flex; gap:6px; }\n' +
+    '    .btn { flex:1; text-align:center; text-decoration:none; padding:8px 0; font-size:11px; font-weight:700; border-radius:10px; }\n' +
+    '    .btn-primary { background:#2563eb; color:#fff; }\n' +
+    '    .btn-secondary { background:rgba(255,255,255,0.06); color:#d1d5db; border:1px solid rgba(255,255,255,0.1); }\n' +
+    '  </style>\n' +
+    '</head>\n' +
+    '<body>\n' +
+    '  <div class="widget-card">\n' +
+    '    <div class="top-bar">\n' +
+    '      <span>🏢 ' + (CONFIG.EMPRESA || "Aviatur") + '</span>\n' +
+    '      <span>Dilan Garrido</span>\n' +
+    '    </div>\n' +
+    '    <div class="hero-box">\n' +
+    '      <div class="hero-label">⚡ Cupo Diario Seguro Hoy</div>\n' +
+    '      <div class="hero-val">$' + formatearCOP(cupoHoy) + '</div>\n' +
+    '      <div class="hero-sub">Para ocio y compras sin tocar arriendo ni ahorro</div>\n' +
+    '    </div>\n' +
+    '    <div class="grid">\n' +
+    '      <div class="grid-item">\n' +
+    '        <div class="item-label">🛒 Disponible Libre</div>\n' +
+    '        <div class="item-val">$' + formatearCOP(conf.saldoCuenta) + '</div>\n' +
+    '      </div>\n' +
+    '      <div class="grid-item">\n' +
+    '        <div class="item-label">💎 Bolsillo Ahorro</div>\n' +
+    '        <div class="item-val">$' + formatearCOP(conf.saldoBolsilloAhorro) + '</div>\n' +
+    '      </div>\n' +
+    '      <div class="grid-item">\n' +
+    '        <div class="item-label">🏢 Nómina Quincenal</div>\n' +
+    '        <div class="item-val">en ' + diasQ + ' días</div>\n' +
+    '      </div>\n' +
+    '      <div class="grid-item">\n' +
+    '        <div class="item-label">🟣 Tarjeta Nu</div>\n' +
+    '        <div class="item-val">$' + formatearCOP(conf.deudaTarjetaNu) + '</div>\n' +
+    '      </div>\n' +
+    '    </div>\n' +
+    '    <div class="actions">\n' +
+    '      <a href="' + getUrlWebAppConParametros("view=webapp") + '" class="btn btn-primary">📊 Dashboard</a>\n' +
+    '      <a href="' + getUrlWebAppConParametros("view=mapa") + '" class="btn btn-secondary">🗺️ Mapa</a>\n' +
+    '    </div>\n' +
+    '  </div>\n' +
+    '</body>\n' +
+    '</html>';
+
+  return html;
+}
+
+// ==========================================
 // TELEGRAM MINI APP: WEB APP DASHBOARD FINANCIERO 📱
 // ==========================================
 function servirWebAppDashboard(conf) {
@@ -778,6 +862,48 @@ function doGet(e) {
       return ContentService.createTextOutput(JSON.stringify(obtenerPuntosMapaCalor()))
         .setMimeType(ContentService.MimeType.JSON);
     }
+    if (e.parameter.api === "widget") {
+      var confW = obtenerConfiguracionActual();
+      var radarW = analizarGastosHormigaYDesviacion(confW);
+      var flujoW = confW.flujoQuincenal || {};
+
+      var cupoHoy = radarW.nuevoCupoDiarioSeguro > 0 ? radarW.nuevoCupoDiarioSeguro : 21190;
+      var diasNomina = flujoW.diasParaProximaNomina || 0;
+
+      var payloadWidget = {
+        status: "ok",
+        titular: "Dilan Garrido",
+        empresa: CONFIG.EMPRESA || "Aviatur S.A.S.",
+        cupoDiario: cupoHoy,
+        cupoDiarioFmt: "$" + formatearCOP(cupoHoy) + " COP",
+        saldoDisponible: confW.saldoCuenta,
+        saldoDisponibleFmt: "$" + formatearCOP(confW.saldoCuenta) + " COP",
+        saldoAhorro: confW.saldoBolsilloAhorro,
+        saldoAhorroFmt: "$" + formatearCOP(confW.saldoBolsilloAhorro) + " COP",
+        saldoObligaciones: confW.saldoBolsilloObligaciones,
+        saldoObligacionesFmt: "$" + formatearCOP(confW.saldoBolsilloObligaciones) + " COP",
+        saldoTotal: confW.saldoTotalBanco,
+        saldoTotalFmt: "$" + formatearCOP(confW.saldoTotalBanco) + " COP",
+        deudaNu: confW.deudaTarjetaNu,
+        deudaNuFmt: "$" + formatearCOP(confW.deudaTarjetaNu) + " COP",
+        diasParaNomina: diasNomina,
+        proximaNominaTexto: flujoW.fechaProximaNominaTexto || "Quincena",
+        textoSiri: "Dilan, tu cupo diario seguro hoy es de $" + formatearCOP(cupoHoy) + " pesos. Tienes $" + formatearCOP(confW.saldoCuenta) + " en tu disponible libre y faltan " + diasNomina + " días para tu quincena de Aviatur.",
+        textoNotificacion: "💵 Cupo Hoy: $" + formatearCOP(cupoHoy) + " COP\n🛒 Disponible: $" + formatearCOP(confW.saldoCuenta) + " COP\n🏢 Quincena: en " + diasNomina + " días",
+        porcentajes: {
+          ahorro: confW.pctAhorroReal + "%",
+          obligaciones: confW.pctObligacionesReal + "%",
+          disponible: confW.pctDisponibleReal + "%"
+        },
+        horaActualizacion: Utilities.formatDate(new Date(), CONFIG.ZONA_HORARIA, "hh:mm a")
+      };
+
+      return ContentService.createTextOutput(JSON.stringify(payloadWidget))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    if (e.parameter.view === "widget") {
+      return servirWebAppWidget(conf);
+    }
     if (e.parameter.check_keys === "true") {
       var keys = PropertiesService.getScriptProperties().getKeys();
       var safeProps = {};
@@ -1441,6 +1567,7 @@ function handleTelegramMessage(msg) {
   else if (textLower === "☀️ briefing" || textLower === "briefing") text = "/briefing";
   else if (textLower === "🟣 tarjeta nu" || textLower === "tarjeta nu" || textLower === "tarjeta" || textLower === "nu") text = "/deuda";
   else if (textLower === "📄 extracto pdf" || textLower === "extracto pdf" || textLower === "extracto" || textLower === "/extracto" || textLower === "/pdf") text = "/extracto";
+  else if (textLower === "📱 widget iphone" || textLower === "widget iphone" || textLower === "widget" || textLower === "/widget" || textLower === "/atajo") text = "/widget";
   else if (textLower === "🗺️ mapa de calor" || textLower === "mapa de calor" || textLower === "mapa" || textLower === "/mapa" || textLower === "/calor") text = "/mapa";
   else if (textLower === "⏭️ omitir" || textLower === "omitir") {
     // El usuario omitió compartir ubicación después de un gasto
@@ -2135,6 +2262,12 @@ function handleTelegramMessage(msg) {
   // 11b. Comando /extracto o /pdf (Generador Oficial en PDF)
   if (text === "/extracto" || text === "/pdf") {
     enviarExtractoPdfTelegram(chatId);
+    return;
+  }
+
+  // 11c. Comando /widget (Configuración de Widget iPhone y Siri)
+  if (text === "/widget" || text === "/atajo") {
+    enviarGuiaWidgetTelegram(chatId);
     return;
   }
 
@@ -7235,7 +7368,7 @@ function obtenerTecladoPrincipalTelegram() {
       [{ text: "📄 Extracto PDF" }, { text: "🏆 Cierre de Mes" }],
       [{ text: "⚖️ Calculadora Cuotas" }, { text: "🐜 Radar Hormiga" }],
       [{ text: "📈 Inversiones" }, { text: "🟣 Tarjeta Nu" }],
-      [{ text: "☀️ Briefing" }]
+      [{ text: "☀️ Briefing" }, { text: "📱 Widget iPhone" }]
     ],
     resize_keyboard: true,
     persistent: true
@@ -7250,6 +7383,7 @@ function configurarComandosTelegram() {
     { command: "bolsillos", description: "🏦 Estado en tiempo real y reglas Davivienda" },
     { command: "resumen", description: "📊 Resumen mensual de gastos vs presupuesto" },
     { command: "extracto", description: "📄 Descargar extracto y estado de cuenta mensual en PDF" },
+    { command: "widget", description: "📱 Configurar Widget en iPhone y Siri" },
     { command: "mapa", description: "🗺️ Ver mapa de calor y epicentros de consumo GPS" },
     { command: "quincena", description: "🏢 Calendario de nómina quincenal y compromisos" },
     { command: "traslado", description: "🔄 Trasladar disponible a bolsillo ahorro u obligaciones" },
@@ -7449,6 +7583,48 @@ function generarReporteCierreMes(conf) {
             (score >= 85 ? "¡Mes extraordinario! Protegiste tu capital, mantuviste tus bolsillos intactos y el 53% de ahorro está blindando tu libertad financiera." : "Mes superado. Cuidar más las compras hormiga el próximo mes para que tu disponible libre crezca.");
 
   return msg;
+}
+
+// ==========================================
+// GUÍA Y ENLACES PARA WIDGET IPHONE Y SIRI 📱
+// ==========================================
+function enviarGuiaWidgetTelegram(chatId) {
+  chatId = chatId || CONFIG.TELEGRAM_CHAT_ID;
+  var urlWidgetJson = getUrlWebAppConParametros("api=widget");
+  var urlWidgetVisual = getUrlWebAppConParametros("view=widget");
+
+  var msg = "📱 *TU WIDGET FINANCIERO PARA IPHONE Y SIRI*\n\n" +
+            "Tienes 2 formas sencillas de ver tu saldo y cupo diario en la pantalla de tu iPhone:\n\n" +
+            "━━━━━━━━━━━━━━━━━━━━\n" +
+            "⚡ *MÉTODO 1: CON LA APP ATAJOS (100% NATIVO + SIRI)*\n" +
+            "Sigue estos 3 pasos rápidos en tu iPhone:\n\n" +
+            "1️⃣ Abre la app **Atajos** (*Shortcuts*) y toca **+** (Nuevo Atajo).\n" +
+            "2️⃣ Agrega la acción **Obtener contenido de URL** (*URL Fetch*):\n" +
+            "   • Pega tu enlace privado de API:\n" +
+            "     `" + urlWidgetJson + "`\n" +
+            "3️⃣ Agrega la acción **Mostrar notificación** o **Ver resultados rápidos**:\n" +
+            "   • Selecciona la propiedad `textoNotificacion` o `textoSiri`.\n" +
+            "   • _(Opcional: Agrega **Leer texto con voz** para que Siri te hable)._\n" +
+            "4️⃣ Nombra el atajo: *«Cupo Hoy»* o *«Saldo CFO»*.\n\n" +
+            "👉 ¡Listo! Puedes agregar este atajo como **Widget** en tu pantalla de inicio o decirle: *«Oye Siri, Cupo Hoy»*.\n\n" +
+            "━━━━━━━━━━━━━━━━━━━━\n" +
+            "🎨 *MÉTODO 2: WIDGET VISUAL (MINI APP EN VIVO)*\n" +
+            "Tarjeta minimalista en modo oscuro diseñada para pantalla de celular:\n" +
+            "🔗 [Abrir Widget Visual](" + urlWidgetVisual + ")\n\n" +
+            "💡 _Tu clave de autenticación ya viene protegida e incrustada en tu enlace privado._";
+
+  var kb = [
+    [
+      { text: "📱 Abrir Vista Widget", web_app: { url: urlWidgetVisual } },
+      { text: "📊 Dashboard Completo", web_app: { url: getUrlWebAppConParametros("view=webapp") } }
+    ],
+    [
+      { text: "💳 Ver Mi Saldo", callback_data: "cb:saldo" },
+      { text: "🗺️ Ver Mapa", web_app: { url: getUrlWebAppConParametros("view=mapa") } }
+    ]
+  ];
+
+  sendTelegram(chatId, msg, kb);
 }
 
 // ==========================================
